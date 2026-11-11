@@ -99,18 +99,37 @@ def _query_variants(question: str) -> List[str]:
 def _rrf(hits_list: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     scores: Dict[int, float] = {}
     keep: Dict[int, Dict[str, Any]] = {}
-    for hits in hits_list:
+    matched: Dict[int, set] = {}
+    for query_index, hits in enumerate(hits_list):
         for rank, c in enumerate(hits):
             rid = int(c["rid"])
             scores[rid] = scores.get(rid, 0.0) + 1.0 / (_RRF_K + rank + 1)
             keep[rid] = c
+            matched.setdefault(rid, set()).add(query_index)
     ordered = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     out = []
     for rid, sc in ordered:
         d = dict(keep[rid])
         d["score"] = sc
+        d["matched_queries"] = matched[rid]
         out.append(d)
     return out
+
+
+def _coverage_order(candidates: List[Dict[str, Any]], query_count: int) -> List[Dict[str, Any]]:
+    if query_count <= 1:
+        return candidates
+    selected: List[Dict[str, Any]] = []
+    selected_ids = set()
+    for query_index in range(query_count):
+        candidate = next((c for c in candidates
+                          if int(c["rid"]) not in selected_ids
+                          and query_index in c.get("matched_queries", set())), None)
+        if candidate is not None:
+            selected.append(candidate)
+            selected_ids.add(int(candidate["rid"]))
+    selected.extend(c for c in candidates if int(c["rid"]) not in selected_ids)
+    return selected
 
 
 async def _llm_rerank(llm, question: str, cands: List[Dict[str, Any]],
@@ -152,9 +171,13 @@ async def build_context(kb: KnowledgeStore, cfg: AppConfig, ws: WorkspaceConfig,
     hits = [kb.search(kbkey, _query_tokens(q, cfg), limit=max(top_k * 2, 30))
             for q in variants]
     fused = _rrf(hits)
+    if any(k in question.lower() for k in ("架构", "模块", "整体", "工程", "项目", "overview", "architecture")):
+        for c in fused:
+            if c.get("kind") == "file":
+                c["score"] = float(c.get("score", 0.0)) * 1.2
+        fused.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
 
-    # 评估闭环：用已沉淀的“召回提示”对候选加权
-    boost_hits = _apply_boosts(kb, kbkey, fused)
+    _apply_boosts(kb, kbkey, fused)
     kb_cfg = cfg.knowledge or {}
     rerank_cfg = kb_cfg.get("rerank", {}) or {}
     mode = str(rerank_cfg.get("mode", "none"))
@@ -164,44 +187,64 @@ async def build_context(kb: KnowledgeStore, cfg: AppConfig, ws: WorkspaceConfig,
     else:
         cands = fused[:top_n]
 
-    # 图扩展 1 跳（调用方/被调用）
-    hops = int((kb_cfg.get("retrieve", {}) or {}).get("graph_hops", 1))
+    configured_hops = int((kb_cfg.get("retrieve", {}) or {}).get("graph_hops", 1))
+    hops = min(3, max(2 if deep else 0, configured_hops))
     expanded: List[Dict[str, Any]] = list(cands)
-    if hops >= 1:
-        ref_ids = [c["ref_id"] for c in cands if c.get("kind") == "code"]
-        neigh = kb.neighbors(kbkey, ref_ids, limit=12)
-        for c in kb.chunks_by_refs(kbkey, neigh, limit=8):
+    seen_refs = {c.get("ref_id") for c in cands if c.get("kind") == "code"}
+    frontier = list(seen_refs)
+    for hop in range(hops):
+        if not frontier:
+            break
+        neigh = [n for n in kb.neighbors(kbkey, frontier, limit=24) if n not in seen_refs]
+        if not neigh:
+            break
+        seen_refs.update(neigh)
+        for c in kb.chunks_by_refs(kbkey, neigh, limit=16):
             d = dict(c)
             d["score"] = 0.0
+            d["graph_hop"] = hop + 1
             expanded.append(d)
-    max_parts = top_n + min(4, max(0, len(expanded) - len(cands)))
+        frontier = neigh
+    expanded = _coverage_order(expanded, len(variants))
+    max_parts = max(8, top_n + min(8, max(0, len(expanded) - len(cands))))
 
     parts: List[str] = []
     citations: List[Citation] = []
     used = 0
     seen = set()
-    for rank, c in enumerate(expanded, 1):
+    seen_text = set()
+    for c in expanded:
         ckey = (c.get("path", ""), c.get("lines", ""), c.get("symbol", ""))
         if ckey in seen:
             continue
         seen.add(ckey)
         a, b = _parse_lines(c.get("lines", ""))
         text = c.get("text") or ""
-        # 代码片段：从源文件按行区间精确回填（保证完整、不被建库时截断）
         if c.get("kind") == "code" and b > a:
             deeper = _read_symbol_body(root_dir, c.get("path", ""), a, b, max_lines=160)
             if deeper:
                 text = deeper
-        header = f"[片段{rank}] {c.get('path','')}:{c.get('lines','')} ({c.get('kind','')}:{c.get('symbol','')})"
+        normalized = " ".join(text.split()).lower()
+        if not normalized or normalized in seen_text:
+            continue
+        header = f"[片段{len(parts) + 1}] {c.get('path','')}:{c.get('lines','')} ({c.get('kind','')}:{c.get('symbol','')})"
         block = header + "\n" + text
         bt = estimate_tokens(block)
-        if used + bt > budget_tokens and parts:
-            break
+        if used + bt > budget_tokens:
+            remaining = budget_tokens - used - estimate_tokens(header)
+            if remaining < 80:
+                continue
+            text = clip(text, max(200, int(len(text) * remaining / max(1, bt))))
+            block = header + "\n" + text
+            bt = estimate_tokens(block)
+            if used + bt > budget_tokens:
+                continue
         parts.append(block)
+        seen_text.add(normalized)
         used += bt
         citations.append(Citation(path=c.get("path", ""), start_line=a, end_line=b,
                                   symbol=c.get("symbol", ""), kind=c.get("kind", ""),
                                   score=float(c.get("score", 0.0))))
-        if len(parts) >= max(max_parts, 8):
+        if len(parts) >= max_parts or used >= budget_tokens:
             break
     return "\n\n".join(parts), citations, used

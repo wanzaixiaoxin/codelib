@@ -121,7 +121,7 @@
               box-shadow:0 10px 35px rgba(20,35,60,.08)}
   .login-card h1{font-size:20px;margin:0 0 8px}.login-card p{color:var(--muted);font-size:13px;margin:0 0 18px}
   .admin-modal{position:fixed;inset:0;background:rgba(25,35,55,.35);display:none;align-items:center;justify-content:center;z-index:30}
-  .admin-modal.open{display:flex}.admin-card{background:#fff;width:min(900px,96vw);max-height:92vh;overflow:auto;border-radius:12px;padding:18px}
+  .admin-modal.open{display:flex}.admin-card{background:#fff;width:min(1100px,96vw);max-height:92vh;overflow:auto;border-radius:12px;padding:18px}
   .admin-head{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding-bottom:10px}
   .admin-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:12px}
   .admin-section{border:1px solid var(--line);border-radius:10px;padding:14px;margin-top:12px}
@@ -131,7 +131,15 @@
   .user-row{display:grid;grid-template-columns:1fr 2fr auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
   .user-row select{min-height:54px;border:1px solid var(--line);border-radius:7px;padding:5px}
   .muted{color:var(--muted);font-size:12px}
-  @media(max-width:700px){.admin-grid{grid-template-columns:1fr}.user-row{grid-template-columns:1fr}}
+  .workspace-manage,.conversation-manage{border-top:1px solid var(--line);padding:12px 0}
+  .workspace-manage:first-child,.conversation-manage:first-child{border-top:0}
+  .manage-title{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+  .manage-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+  .danger{color:#c0392b;border-color:#e5b7b1}
+  .edit-workspace{display:none;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:end;margin-top:10px}
+  .edit-workspace.open{display:grid}
+  .edit-workspace input{min-width:0;width:100%;height:34px;border:1px solid var(--line);border-radius:6px;padding:0 8px}
+  @media(max-width:700px){.admin-grid{grid-template-columns:1fr}.user-row{grid-template-columns:1fr}.edit-workspace{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -190,7 +198,8 @@
 </aside>
 <aside id="adminPanel" class="admin-modal">
   <div class="admin-card">
-    <div class="admin-head"><strong>管理员：账号与知识库</strong><button id="adminClose" class="ghost">关闭</button></div>
+    <div class="admin-head"><strong>管理员：知识库、对话与账号</strong><button id="adminClose" class="ghost">关闭</button></div>
+    <section class="admin-section"><h3>知识库管理</h3><div id="adminWorkspaces" class="muted">加载中…</div></section>
     <div class="admin-grid">
       <form id="createWorkspaceForm" class="admin-section">
         <h3>创建知识库</h3>
@@ -211,12 +220,13 @@
       </form>
     </div>
     <section class="admin-section"><h3>账号与知识库授权</h3><div id="adminUsers" class="muted">加载中…</div></section>
+    <section class="admin-section"><h3>对话管理</h3><div id="adminConversations" class="muted">加载中…</div></section>
   </div>
 </aside>
 <script src="/static/markdown-it.min.js"></script>
 <script>
 const $ = (s) => document.querySelector(s);
-const state = { convId:null, libId:null, libraries:[], conversations:[], sending:false, lastTraceId:null, user:null, allLibraries:[] };
+const state = { convId:null, libId:null, libraries:[], conversations:[], sending:false, lastTraceId:null, user:null, allLibraries:[], allConversations:[] };
 const markdown = window.markdownit({html:false, linkify:true, typographer:false});
 markdown.disable("image");
 
@@ -394,10 +404,87 @@ async function init(){
 }
 
 function selectedValues(select){ return Array.from(select.selectedOptions).map(o=>o.value); }
+function renderAdminWorkspaces(){
+  const box=$("#adminWorkspaces"); box.innerHTML="";
+  if(!state.allLibraries.length){ box.innerHTML='<div class="hint">暂无知识库，请在下方创建。</div>'; return; }
+  state.allLibraries.forEach(w=>{
+    const c=w.counts||{};
+    const row=document.createElement("div"); row.className="workspace-manage";
+    row.innerHTML=`<div class="manage-title"><div><b>${esc(w.name)}</b> <code>${esc(w.id)}</code>
+      <span class="tag ${w.ready?'good':'fair'}">${w.ready?'可查询':'未建库'}</span>
+      <span class="tag">${w.source==='config'?'配置库':'动态库'}</span></div>
+      <div class="muted">${esc(w.index_format||'legacy')}</div></div>
+      <div class="muted" style="margin-top:5px">${esc(w.desc||'无说明')}</div>
+      <div class="muted" style="margin-top:4px"><code>${esc(w.path)}</code></div>
+      <div class="muted" style="margin-top:5px">文件 ${c.files||0} · 文档块 ${c.doc_chunks||0} · 符号 ${c.symbols||0} · 总块 ${c.chunks||0} · 图边 ${c.edges||0} · 旧索引文件 ${w.legacy_files||0}</div>
+      <div class="manage-actions"><button class="ghost edit-ws">编辑</button>
+        <button class="ghost rebuild-ws" data-full="false">增量重建</button>
+        <button class="ghost rebuild-ws" data-full="true">全量重建</button>
+        <button class="ghost danger delete-ws">删除</button></div>
+      <form class="edit-workspace"><input name="name" value="${esc(w.name)}" required aria-label="知识库名称">
+        <input name="path" value="${esc(w.path)}" required aria-label="工程目录">
+        <input name="description" value="${esc(w.desc||'')}" aria-label="说明">
+        <span><button class="primary" type="submit">保存</button><button class="ghost cancel-edit" type="button">取消</button></span></form>`;
+    row.querySelector(".edit-ws").onclick=()=>row.querySelector(".edit-workspace").classList.toggle("open");
+    row.querySelector(".cancel-edit").onclick=()=>row.querySelector(".edit-workspace").classList.remove("open");
+    row.querySelector(".edit-workspace").onsubmit=async e=>{
+      e.preventDefault(); const f=new FormData(e.target); const btn=e.target.querySelector("button[type=submit]"); btn.disabled=true;
+      try{
+        await api(`/api/admin/workspaces/${encodeURIComponent(w.id)}`,{method:"PUT",body:JSON.stringify({name:f.get("name"),path:f.get("path"),description:f.get("description")})});
+        alert("知识库已保存"); await loadWorkspace(); await openAdminPanel();
+      }catch(err){alert(err.message);}finally{btn.disabled=false;}
+    };
+    row.querySelectorAll(".rebuild-ws").forEach(btn=>btn.onclick=async()=>{
+      const full=btn.dataset.full==="true"; btn.disabled=true; const old=btn.textContent; btn.textContent="重建中…";
+      try{
+        const r=await api(`/api/admin/workspaces/${encodeURIComponent(w.id)}/rebuild`,{method:"POST",body:JSON.stringify({full})});
+        const k=r.knowledge||{}; alert(`重建完成：新增/更新 ${k.indexed||0}，跳过 ${k.skipped||0}，删除 ${k.deleted||0}，失败 ${k.failed||0}`);
+        await loadWorkspace(); await openAdminPanel();
+      }catch(err){alert(err.message);btn.disabled=false;btn.textContent=old;}
+    });
+    row.querySelector(".delete-ws").onclick=async()=>{
+      if(!confirm(`确定删除知识库「${w.name}」？\n将同时删除其授权、对话、记忆、留痕和索引；不会删除源工程文件。`)) return;
+      try{ await api(`/api/admin/workspaces/${encodeURIComponent(w.id)}`,{method:"DELETE"});
+        alert("知识库已删除"); await loadWorkspace(); await openAdminPanel();
+      }catch(err){alert(err.message);}
+    };
+    box.appendChild(row);
+  });
+}
+
+function renderAdminConversations(){
+  const box=$("#adminConversations"); box.innerHTML="";
+  const list=state.allConversations||[];
+  if(!list.length){ box.innerHTML='<div class="hint">暂无对话。</div>'; return; }
+  list.forEach(c=>{
+    const row=document.createElement("div"); row.className="conversation-manage";
+    row.innerHTML=`<div class="manage-title"><div><b>${esc(c.title||'新对话')}</b>
+      <div class="muted">${esc(c.owner_username||'未知账号')} · ${esc(libName(c.workspace_id))} · ${c.message_count||0} 条消息</div></div>
+      <div class="muted">${fmtTime(c.updated_at)}</div></div>
+      <div class="manage-actions"><button class="ghost open-conv">打开</button><button class="ghost rename-conv">重命名</button><button class="ghost danger delete-conv">删除</button></div>`;
+    row.querySelector(".open-conv").onclick=async()=>{ $("#adminPanel").classList.remove("open"); await openConversation(c.id); };
+    row.querySelector(".rename-conv").onclick=async()=>{
+      const title=prompt("新的对话标题：",c.title||""); if(title===null) return;
+      try{ await api(`/api/conversations/${c.id}`,{method:"PATCH",body:JSON.stringify({title})}); await loadConversations(); await openAdminPanel(); }
+      catch(err){alert(err.message);}
+    };
+    row.querySelector(".delete-conv").onclick=async()=>{
+      if(!confirm(`删除对话「${c.title||'新对话'}」？`)) return;
+      try{ await api(`/api/conversations/${c.id}`,{method:"DELETE"});
+        if(state.convId===c.id){ state.convId=null; localStorage.removeItem("codelib_conv"); renderMessages([]); resetHeader(); }
+        await loadConversations(); await openAdminPanel();
+      }catch(err){alert(err.message);}
+    };
+    box.appendChild(row);
+  });
+}
+
 async function openAdminPanel(){
   $("#adminPanel").classList.add("open");
-  const [ud,wd]=await Promise.all([api("/api/admin/users"),api("/api/admin/workspaces")]);
+  const [ud,wd,cd]=await Promise.all([api("/api/admin/users"),api("/api/admin/workspaces"),api("/api/conversations")]);
   state.allLibraries=wd.workspaces||[];
+  state.allConversations=cd.conversations||[];
+  renderAdminWorkspaces(); renderAdminConversations();
   const opts=state.allLibraries.map(w=>`<option value="${esc(w.id)}">${esc(w.name)} (${esc(w.id)})</option>`).join("");
   $("#newUserWorkspaces").innerHTML=opts;
   const box=$("#adminUsers"); box.innerHTML="";

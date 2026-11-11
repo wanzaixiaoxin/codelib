@@ -74,6 +74,20 @@ class WorkspaceCreateRequest(BaseModel):
     description: str = ""
 
 
+class WorkspaceUpdateRequest(BaseModel):
+    name: str
+    path: str
+    description: str = ""
+
+
+class WorkspaceRebuildRequest(BaseModel):
+    full: bool = True
+
+
+class ConversationUpdateRequest(BaseModel):
+    title: str
+
+
 class WorkspaceAccessRequest(BaseModel):
     workspace_ids: list[str]
 
@@ -127,11 +141,21 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         log.error("No accounts exist. Configure auth.bootstrap_admin before first startup.")
     configured_ids = {w.id for w in cfg.workspaces}
     for row in store.list_managed_workspaces():
-        if row["id"] not in configured_ids:
+        existing = next((w for w in cfg.workspaces if w.id == row["id"]), None)
+        if row.get("disabled"):
+            if existing is not None:
+                cfg.workspaces.remove(existing)
+            continue
+        if existing is not None:
+            existing.name = row["name"]
+            existing.path = row["path"]
+            existing.description = row.get("description", "")
+        else:
             cfg.workspaces.append(WorkspaceConfig(
                 id=row["id"], name=row["name"], path=row["path"],
                 description=row.get("description", "")))
-            configured_ids.add(row["id"])
+    if not any(w.id == cfg.default_workspace for w in cfg.workspaces):
+        cfg.default_workspace = cfg.workspaces[0].id if cfg.workspaces else ""
     bot = BotService(cfg, store, MemoryManager(store, cfg.memory))
     wecom = WeComChannel(cfg.channel("wecom"))
     feishu = FeishuChannel(cfg.channel("feishu"))
@@ -163,6 +187,12 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         if user["role"] != "admin":
             raise HTTPException(status_code=403, detail="需要管理员权限")
         return user
+
+    def managed_workspace(workspace_id: str) -> WorkspaceConfig:
+        target = next((w for w in cfg.workspaces if w.id == workspace_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="知识库不存在")
+        return target
 
     def user_workspace(user: Dict[str, Any], workspace_id: Optional[str] = None):
         if user["role"] == "admin":
@@ -324,7 +354,14 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             item = {"id": w.id, "name": w.name, "desc": w.description or "",
                     "ready": counts["chunks"] > 0, "counts": counts}
             if include_path:
-                item["path"] = w.path
+                legacy = store.stats(w.id)
+                item.update({
+                    "path": w.path,
+                    "source": "config" if w.id in configured_ids else "managed",
+                    "index_format": kb.get_meta(f"index_format:{ws_kb_id(w.id, w.name)}", "legacy"),
+                    "legacy_files": legacy["indexed_files"],
+                    "auto_reindex_on_query": w.index.auto_reindex_on_query,
+                })
             items.append(item)
         return items
 
@@ -360,6 +397,66 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             raise HTTPException(status_code=500, detail=f"知识库已登记，但建库失败：{exc}") from exc
         return {"workspace": {"id": ws.id, "name": ws.name, "path": ws.path,
                               "ready": True, "counts": result.get("totals", {})}}
+
+    @app.put("/api/admin/workspaces/{workspace_id}")
+    async def admin_update_workspace(workspace_id: str, req: WorkspaceUpdateRequest,
+                                     admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+        ws = managed_workspace(workspace_id)
+        name = req.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="知识库名称不能为空")
+        path = Path(os.path.expanduser(req.path)).resolve()
+        if not path.is_dir():
+            raise HTTPException(status_code=400, detail="目录不存在或不是目录")
+        from .knowledge import KnowledgeStore
+        from .knowledge.build import build_workspace, ws_kb_id
+        old_key = ws_kb_id(ws.id, ws.name)
+        new_key = ws_kb_id(ws.id, name)
+        path_changed = str(path) != ws.path
+        store.add_managed_workspace(ws.id, name, str(path), req.description.strip())
+        kb = KnowledgeStore(cfg.knowledge_db_path)
+        await asyncio.to_thread(kb.rename_workspace, old_key, new_key)
+        ws.name = name
+        ws.path = str(path)
+        ws.description = req.description.strip()
+        result = None
+        if path_changed:
+            from . import indexer
+            await asyncio.to_thread(indexer.index_workspace, store, ws, True)
+            result = await asyncio.to_thread(build_workspace, cfg, ws, True)
+        counts = kb.counts(new_key)
+        return {"workspace": {"id": ws.id, "name": ws.name, "path": ws.path,
+                              "description": ws.description, "ready": counts["chunks"] > 0,
+                              "counts": counts}, "rebuilt": result}
+
+    @app.post("/api/admin/workspaces/{workspace_id}/rebuild")
+    async def admin_rebuild_workspace(workspace_id: str, req: WorkspaceRebuildRequest,
+                                      admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+        ws = managed_workspace(workspace_id)
+        from . import indexer
+        from .knowledge.build import build_workspace
+        legacy = await asyncio.to_thread(indexer.index_workspace, store, ws, req.full)
+        result = await asyncio.to_thread(build_workspace, cfg, ws, req.full)
+        return {"workspace_id": ws.id, "full": req.full,
+                "legacy": legacy, "knowledge": result}
+
+    @app.delete("/api/admin/workspaces/{workspace_id}")
+    async def admin_delete_workspace(workspace_id: str,
+                                     admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+        ws = managed_workspace(workspace_id)
+        from .knowledge import KnowledgeStore
+        from .knowledge.build import ws_kb_id
+        kb = KnowledgeStore(cfg.knowledge_db_path)
+        await asyncio.to_thread(kb.delete_workspace, ws_kb_id(ws.id, ws.name))
+        removed = store.delete_workspace_data(ws.id)
+        if ws.id in configured_ids:
+            store.disable_managed_workspace(ws.id, ws.name, ws.path, ws.description)
+        else:
+            store.delete_managed_workspace(ws.id)
+        cfg.workspaces.remove(ws)
+        if cfg.default_workspace == ws.id:
+            cfg.default_workspace = cfg.workspaces[0].id if cfg.workspaces else ""
+        return {"ok": True, "workspace_id": ws.id, "removed": removed}
 
     @app.get("/healthz")
     async def healthz() -> Dict[str, Any]:
@@ -524,6 +621,16 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                 "trace_id": ans.trace_id,
                 "conversation": store.get_session(sid),
                 "messages": store.get_all_messages(sid)}
+
+    @app.patch("/api/conversations/{sid}")
+    async def rename_conversation(sid: str, req: ConversationUpdateRequest,
+                                  user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+        check_session_access(user, store.get_session(sid))
+        title = req.title.strip()
+        if not title or len(title) > 80:
+            raise HTTPException(status_code=400, detail="对话标题需为 1-80 个字符")
+        store.touch_session(sid, title)
+        return {"conversation": store.get_session(sid)}
 
     @app.delete("/api/conversations/{sid}")
     async def delete_conversation(sid: str,

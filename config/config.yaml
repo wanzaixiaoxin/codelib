@@ -50,7 +50,8 @@ knowledge:
   retrieve:
     top_k: 40
     budget_tokens: 4000
-    graph_hops: 1
+    graph_hops: 1                   # 代码邻接扩展跳数（0-3）；!deep 至少两跳
+    refinement_rounds: 1            # 修订后默认再复核一次；!deep 最多三轮
     query_expand: synonym
   answer_review: true             # 分析类问题检查相关性和覆盖度，发现明确缺口时修订
   rerank:

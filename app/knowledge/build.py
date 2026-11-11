@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import AppConfig, IndexConfig, WorkspaceConfig
-from ..indexer import _extract_markdown, detect_lang, iter_files
+from ..indexer import detect_lang, iter_files
 from ..utils import read_text_safe, rel_posix, sha256_file, sha256_text, clip
+from .chunking import document_chunks, file_summary, symbol_chunks
 from .schema import KnowledgeStore
 
 try:  # tree-sitter 核心 + 官方自带编译产物的 grammar
@@ -36,6 +37,7 @@ _GRAMMAR_MODULES = {
     "tsx": ("tree_sitter_typescript", "language_tsx"),
 }
 _PARSER_CACHE: Dict[str, Any] = {}
+INDEX_FORMAT_VERSION = "2"
 
 
 def _get_parser(lang: str):
@@ -148,13 +150,12 @@ def _extract_tree_sitter(source: bytes, lines: List[str], rel: str, lang: str
                 body = node.text.decode("utf-8", "ignore")
                 sig = clip(body.splitlines()[0].strip() if body else name, 300)
                 doc = _doc_comment(lines, start)
-                # 片段用整个函数体（不只是首行/注释），避免"只召回签名或注释就被截断"
-                text = clip(f"{sig}\n{doc}\n{body}".strip(), 4000)
+                text = f"{sig}\n{doc}\n{body}".strip()
                 sym_id = "sym_" + hashlib.md5(f"{rel}|{qual}|{kind}".encode()).hexdigest()[:16]
                 symbols.append({
                     "id": sym_id, "path": rel, "lang": lang, "kind": kind,
                     "qualname": qual, "start_line": start + 1, "end_line": end,
-                    "signature": sig, "doc": doc, "body": clip(body, 2000),
+                    "signature": sig, "doc": doc, "body": clip(body, 20000),
                     "text": text, "hash": sha256_text(body),
                 })
                 parents = parents + [(kind, name)]
@@ -213,10 +214,11 @@ def _rebuild_edges(store: KnowledgeStore, ws_id: str) -> int:
         body = s.get("body") or ""
         if not body:
             continue
+        identifiers = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", body))
         for name, ids in name_map.items():
             if name in stop or name.lower() in stop:
                 continue
-            if name in body:
+            if name in identifiers:
                 for did in ids:
                     if did != s["id"]:
                         edges.append((s["id"], did, "calls", 1.0))
@@ -229,6 +231,9 @@ def build_workspace(cfg: AppConfig, ws: WorkspaceConfig, full: bool = False) -> 
     kb = cfg.knowledge or {}
     store = KnowledgeStore(cfg.knowledge_db_path)
     ws_id = ws_kb_id(ws.id, ws.name)   # 知识库按 id:name 存，避免 id↔name 不一致找不到
+    version_key = f"index_format:{ws_id}"
+    if store.get_meta(version_key) != INDEX_FORMAT_VERSION:
+        full = True
     if full:
         store.reset(ws_id)
 
@@ -236,16 +241,20 @@ def build_workspace(cfg: AppConfig, ws: WorkspaceConfig, full: bool = False) -> 
         "parse_exts",
         ["md", "txt", "pdf", "docx", "pptx", "xlsx", "yaml", "yml", "json", "toml", "ini", "conf", "rst"])
     include = list(dict.fromkeys(list(ws.index.include) + [f"*.{e.lstrip('.')}" for e in parse_exts]))
-    scan_cfg = dataclasses.replace(ws.index, include=include)
+    document_patterns = {f"*.{e.lstrip('.').lower()}" for e in parse_exts}
+    exclude_globs = [p for p in ws.index.exclude_globs if p.lower() not in document_patterns]
+    scan_cfg = dataclasses.replace(ws.index, include=include, exclude_globs=exclude_globs)
 
     t0 = time.time()
-    scanned = indexed = skipped = failed = 0
+    scanned = indexed = skipped = failed = deleted = 0
     n_sym = n_doc = 0
     changed = False
+    current_paths = set()
 
     for path in iter_files(ws.path, scan_cfg):
         scanned += 1
         rel = rel_posix(path, ws.path)
+        current_paths.add(rel)
         _tf = time.time()
         try:
             fhash = sha256_file(path)
@@ -259,38 +268,36 @@ def build_workspace(cfg: AppConfig, ws: WorkspaceConfig, full: bool = False) -> 
         suffix = path.suffix.lower()
         lang = detect_lang(path)
         try:
-            if suffix in (".py", ".pyi"):
+            is_code = suffix in (".py", ".pyi") or (
+                suffix in _LANG_NAME and _LANG_NAME[suffix] != "sql")
+            if is_code:
                 text = read_text_safe(path, 4 * 1024 * 1024)
-                syms = _extract_tree_sitter(text.encode("utf-8"), text.splitlines(), rel, "python")
+                code_lang = "python" if suffix in (".py", ".pyi") else _LANG_NAME[suffix]
+                syms = _extract_tree_sitter(text.encode("utf-8"), text.splitlines(), rel, code_lang)
                 if not syms:
-                    syms = _regex_symbols(text, rel, "python")
+                    syms = _regex_symbols(text, rel, code_lang)
                 for s in syms:
                     store.upsert_symbol(ws_id, s)
-                    store.insert_chunk(ws_id, "code", s["id"], rel,
-                                       f"{s['start_line']}-{s['end_line']}", s["qualname"],
-                                       s["text"], s["hash"])
-                n_sym += len(syms)
-            elif suffix in _LANG_NAME and _LANG_NAME[suffix] != "sql":
-                text = read_text_safe(path, 4 * 1024 * 1024)
-                syms = _extract_tree_sitter(text.encode("utf-8"), text.splitlines(), rel, _LANG_NAME[suffix])
-                if not syms:
-                    syms = _regex_symbols(text, rel, _LANG_NAME[suffix])
-                for s in syms:
-                    store.upsert_symbol(ws_id, s)
-                    store.insert_chunk(ws_id, "code", s["id"], rel,
-                                       f"{s['start_line']}-{s['end_line']}", s["qualname"],
-                                       s["text"], s["hash"])
+                    store.insert_chunks(ws_id, "code", rel, symbol_chunks(s))
+                summary = file_summary(rel, code_lang, text, syms)
+                store.insert_chunk(ws_id, "file", summary["id"], rel, summary["lines"],
+                                   Path(rel).name, summary["text"], summary["hash"])
                 n_sym += len(syms)
             else:
                 text = _doc_text(path, rel)
                 if text:
-                    idx = IndexConfig()
-                    chunks = _extract_markdown(text, rel, idx)
+                    chunks = document_chunks(text)
                     for c in chunks:
                         did = "doc_" + hashlib.md5(
                             f"{rel}|{c.get('symbol','')}|{c['start_line']}".encode()).hexdigest()[:16]
                         _insert_doc(store, ws_id, did, rel, c)
                         n_doc += 1
+                    titles = list(dict.fromkeys(c["symbol"] for c in chunks if c.get("symbol")))
+                    overview = f"文档：{rel}\n\n章节：\n" + "\n".join(f"- {t}" for t in titles[:100])
+                    fid = "file_" + hashlib.md5(rel.encode("utf-8")).hexdigest()[:16]
+                    store.insert_chunk(ws_id, "file", fid, rel,
+                                       f"1-{max(1, len(text.splitlines()))}", Path(rel).name,
+                                       overview, sha256_text(text))
         except Exception:
             failed += 1
             continue
@@ -300,11 +307,19 @@ def build_workspace(cfg: AppConfig, ws: WorkspaceConfig, full: bool = False) -> 
         if os.environ.get("KB_DEBUG"):
             print(f"[kb] {time.time() - _tf:6.2f}s {rel}", flush=True)
 
+    if not full:
+        for rel in set(store.file_paths(ws_id)) - current_paths:
+            store.delete_file(ws_id, rel)
+            deleted += 1
+            changed = True
     edges = _rebuild_edges(store, ws_id) if changed else store.counts(ws_id)["edges"]
+    if failed == 0:
+        store.set_meta(version_key, INDEX_FORMAT_VERSION)
     counts = store.counts(ws_id)
     return {
         "workspace": ws_id, "id": ws.id, "name": ws.name, "path": ws.path, "full": full,
         "scanned": scanned, "indexed": indexed, "skipped": skipped, "failed": failed,
+        "deleted": deleted,
         "symbols_added": n_sym, "doc_chunks_added": n_doc, "edges": edges,
         "totals": counts, "elapsed_s": round(time.time() - t0, 2),
     }

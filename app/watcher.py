@@ -29,6 +29,9 @@ async def watch_loop(cfg: AppConfig, store: Store) -> None:
                 if ch.has_changes:
                     res = indexer.index_workspace(store, ws, full=False)
                     retrieval.invalidate(ws.id)
+                    if cfg.knowledge_enabled:
+                        from .knowledge.build import build_workspace
+                        build_workspace(cfg, ws, full=False)
                     log.info("工作区 %s 变更已增量重建：+%d ~%d -%d",
                              ws.id, res["added"], res["modified"], res["deleted"])
             except Exception:

@@ -60,13 +60,25 @@ class BotService:
     # ---------------- 索引保障 ----------------
     def _ensure_index(self, ws: WorkspaceConfig, force: bool = False) -> Optional[Dict[str, Any]]:
         stats = self.store.stats(ws.id)
+        result = None
         if force or stats["chunks"] == 0:
-            return indexer.index_workspace(self.store, ws, full=True)
-        if ws.index.auto_reindex_on_query:
+            result = indexer.index_workspace(self.store, ws, full=True)
+        elif ws.index.auto_reindex_on_query:
             ch = indexer.compute_changes(self.store, ws)
             if ch.has_changes:
-                return indexer.index_workspace(self.store, ws, full=False)
-        return None
+                result = indexer.index_workspace(self.store, ws, full=False)
+
+        if self.kb is not None:
+            from .knowledge.build import INDEX_FORMAT_VERSION, build_workspace, ws_kb_id
+            key = ws_kb_id(ws.id, ws.name)
+            needs_full = force or self.kb.counts(key)["chunks"] == 0
+            needs_full = needs_full or self.kb.get_meta(f"index_format:{key}") != INDEX_FORMAT_VERSION
+            legacy_changed = bool(result and any(result.get(k, 0) for k in ("added", "modified", "deleted")))
+            if needs_full or legacy_changed:
+                knowledge_result = build_workspace(self.cfg, ws, full=needs_full)
+                result = dict(result or {})
+                result["knowledge"] = knowledge_result
+        return result
 
     # ---------------- 统一入口 ----------------
     async def handle(self, workspace_id: str, text: str, session_id: str = "",
@@ -109,6 +121,8 @@ class BotService:
             retrieval_query = await self._resolve_query(text, history)
             effective_question = retrieval_query or text
             resolved_by = "heuristic" if retrieval_query.strip() == heuristic.strip() else "llm"
+        if deep or self._is_analytical_question(effective_question):
+            retrieval_query = await self._plan_retrieval(effective_question)
         if tracer:
             tracer.resolved(len(history or []), retrieval_query, effective_question, resolved_by)
 
@@ -229,7 +243,7 @@ class BotService:
                     answer_text, review_report, more_citations, more_used = await self._review_and_revise(
                         ws, effective_question, retrieval_query, context, citations,
                         mem_block, history, answer_text, use_kb,
-                        max(0, budget - used), top_k, deep_k, deep)
+                        max(budget // 2, budget - used), top_k, deep_k, deep)
                     used += more_used
                     citations.extend(more_citations)
                     _llm_ms += int((time.time() - review_t0) * 1000)
@@ -345,9 +359,34 @@ class BotService:
         return False
     @staticmethod
     def _is_analytical_question(question: str) -> bool:
+        q = (question or "").lower()
         markers = ("分析", "为什么", "原因", "根因", "原理", "机制", "流程", "链路",
-                   "架构", "设计", "对比", "差异", "影响", "排查", "优化", "如何实现", "怎么实现")
-        return any(marker in (question or "") for marker in markers)
+                   "架构", "设计", "对比", "差异", "影响", "排查", "优化", "如何实现", "怎么实现",
+                   "why", "how ", "architecture", "compare", "difference", "root cause", "debug")
+        return any(marker in q for marker in markers)
+
+    async def _plan_retrieval(self, question: str) -> str:
+        if not self.llm.available:
+            return question
+        system = (
+            "你是代码检索规划器。把复杂问题拆成最多3个可独立搜索的子问题。"
+            "保留用户明确给出的文件、符号和业务术语；补充可能涉及的调用方、被调用方、配置、协议或失败路径。"
+            "不要回答用户，不要发明用户未涉及的组件。只输出 JSON：{\"queries\":[\"...\"]}。"
+        )
+        raw = await self.llm.chat(system, f"用户问题：{question}")
+        if not raw or str(raw).startswith("__LLM_ERROR__"):
+            return question
+        try:
+            match = re.search(r"\{.*\}", str(raw), re.S)
+            data = json.loads(match.group(0) if match else str(raw))
+            raw_queries = data.get("queries", []) if isinstance(data, dict) else []
+            if not isinstance(raw_queries, list):
+                return question
+            queries = [str(q).strip() for q in raw_queries if str(q).strip()]
+        except (ValueError, TypeError, AttributeError):
+            return question
+        queries = [q for q in queries if q != question and len(q) <= 200][:3]
+        return "\n".join([question, *queries])
 
     async def _review_and_revise(self, ws: WorkspaceConfig, question: str,
                                  retrieval_query: str, context: str,
@@ -356,14 +395,56 @@ class BotService:
                                  use_kb: bool, remaining_budget: int, top_k: int,
                                  deep_top_k: int, deep: bool
                                  ) -> tuple[str, Dict[str, Any], List[Citation], int]:
+        configured = int((self.cfg.knowledge or {}).get("retrieve", {}).get("refinement_rounds", 1))
+        round_limit = max(2, min(3, configured + (1 if deep else 0)))
+        all_added: List[Citation] = []
+        total_tokens = 0
+        reports: List[Dict[str, Any]] = []
+        revised_any = False
+        working_context = context
+        for _ in range(round_limit):
+            draft, report, added, used = await self._review_and_revise_once(
+                ws, question, retrieval_query, working_context,
+                [*current_citations, *all_added], mem_block, history, draft,
+                use_kb, max(0, remaining_budget - total_tokens), top_k, deep_top_k, deep)
+            working_context = report.pop("_working_context", working_context)
+            reports.append(report)
+            all_added.extend(added)
+            total_tokens += used
+            revised_any = revised_any or bool(report.get("revised"))
+            if not report.get("revised"):
+                break
+        last = reports[-1] if reports else {"checked": False}
+        summary = {
+            "checked": any(r.get("checked") for r in reports),
+            "revised": revised_any,
+            "relevant": last.get("relevant", True),
+            "complete": last.get("complete", True),
+            "missing": last.get("missing", []),
+            "unsupported": last.get("unsupported", []),
+            "claims": last.get("claims", []),
+            "rounds": len(reports),
+            "history": reports,
+        }
+        return draft, summary, all_added, total_tokens
+
+    async def _review_and_revise_once(self, ws: WorkspaceConfig, question: str,
+                                 retrieval_query: str, context: str,
+                                 current_citations: List[Citation], mem_block: str,
+                                 history: Optional[List[Dict[str, Any]]], draft: str,
+                                 use_kb: bool, remaining_budget: int, top_k: int,
+                                 deep_top_k: int, deep: bool
+                                 ) -> tuple[str, Dict[str, Any], List[Citation], int]:
         """分析类问题：核对覆盖度，按遗漏项补检索，再用证据修订。"""
         review_system = (
-            "你是代码问答质量检查器。只判断回答是否切题、是否覆盖问题要求、是否有结论缺少候选证据。"
-            '只输出 JSON：{"relevant":true,"complete":true,"missing":[],"unsupported":[]}。'
-            "missing 只写用户明确要求但回答遗漏的要点；unsupported 只写无法由给定片段支持的关键断言。"
+            "你是代码问答质量检查器。检查相关性、问题覆盖，以及草稿中的关键事实断言是否由候选证据支持。"
+            '只输出 JSON：{"relevant":true,"complete":true,"missing":[],"unsupported":[],'
+            '"claims":[{"claim":"...","status":"supported|inference|unsupported","evidence":["path:start-end"]}]}。'
+            "claims 只列关键事实；supported 必须给出候选中真实存在的行号来源，明确标为推断的结论用 inference。"
+            "missing 只写用户明确要求但回答遗漏的要点；unsupported 写无法由候选支持的关键断言。"
         )
         review_user = (
-            f"问题：{question}\n\n当前代码证据：\n{context[:16000]}\n\n"
+            f"问题：{question}\n\n当前代码证据：\n{context[:20000]}\n\n"
             f"草稿：\n{draft[:6000]}\n\n请检查相关性、覆盖度和证据支持。"
         )
         raw = await self.llm.chat(review_system, review_user)
@@ -380,10 +461,40 @@ class BotService:
 
         missing = [str(x) for x in (review.get("missing") or []) if str(x).strip()]
         unsupported = [str(x) for x in (review.get("unsupported") or []) if str(x).strip()]
+        def valid_evidence(ref: str) -> bool:
+            match = re.search(r":(\d+)(?:-(\d+))?$", ref)
+            if not match:
+                return False
+            start = int(match.group(1))
+            end = int(match.group(2) or start)
+            path = ref[:match.start()]
+            return any(c.path == path and max(start, c.start_line) <= min(end, c.end_line)
+                       for c in current_citations)
+
+        claims = []
+        raw_claims = review.get("claims") or []
+        if not isinstance(raw_claims, list):
+            raw_claims = []
+        for item in raw_claims[:12]:
+            if not isinstance(item, dict) or not str(item.get("claim", "")).strip():
+                continue
+            claim = str(item["claim"]).strip()
+            status = str(item.get("status", "unsupported")).lower()
+            raw_evidence = item.get("evidence") or []
+            if not isinstance(raw_evidence, list):
+                raw_evidence = []
+            evidence = [str(x).strip() for x in raw_evidence if str(x).strip()]
+            evidence = [x for x in evidence if valid_evidence(x)]
+            if status == "supported" and not evidence:
+                status = "unsupported"
+            claims.append({"claim": claim, "status": status, "evidence": evidence})
+            if status == "unsupported" and claim not in unsupported:
+                unsupported.append(claim)
         report = {"checked": True, "revised": False,
                   "relevant": bool(review.get("relevant", True)),
                   "complete": bool(review.get("complete", True)),
-                  "missing": missing[:5], "unsupported": unsupported[:5]}
+                  "missing": missing[:5], "unsupported": unsupported[:8],
+                  "claims": claims}
         needs_revision = (not report["relevant"] or not report["complete"]
                           or bool(missing) or bool(unsupported))
         if not needs_revision:
@@ -393,7 +504,7 @@ class BotService:
         added_citations: List[Citation] = []
         added_tokens = 0
         if (missing or unsupported) and remaining_budget > 0:
-            targeted_query = " ".join([retrieval_query, *missing, *unsupported]).strip()
+            targeted_query = "\n".join([retrieval_query, *missing, *unsupported]).strip()
             try:
                 if use_kb and self.kb is not None:
                     from .knowledge import query as kb_query
@@ -434,6 +545,7 @@ class BotService:
         revised = await self.llm.chat(SYSTEM_PROMPT, prompt)
         if revised and not str(revised).startswith("__LLM_ERROR__"):
             report["revised"] = True
+            report["_working_context"] = context
             return str(revised).strip(), report, added_citations, added_tokens
         return draft, report, [], 0
 
@@ -544,9 +656,14 @@ class BotService:
     def _filter_used_citations(self, text: str, citations: List[Citation],
                                limit: int = 5) -> List[Citation]:
         used = [c for c in citations if c.path and c.path in text]
-        if used:
-            return used[:limit]
-        return citations[:min(3, len(citations))]
+        unique = []
+        seen = set()
+        for c in used:
+            key = (c.path, c.start_line, c.end_line)
+            if key not in seen:
+                seen.add(key)
+                unique.append(c)
+        return unique[:limit]
 
     # ---------------- 无 LLM 降级 ----------------
     def _extractive_answer(self, question: str, context: str,
@@ -595,6 +712,9 @@ class BotService:
             full = "full" in arg.lower()
             res = indexer.index_workspace(self.store, ws, full=full)
             retrieval.invalidate(ws.id)
+            if self.kb is not None:
+                from .knowledge.build import build_workspace
+                build_workspace(self.cfg, ws, full=full)
             return Answer(
                 text=(f"索引完成（{'全量' if full else '增量'}）：扫描 {res['scanned_files']}，"
                       f"写入 {res['indexed']}，删除 {res['deleted']}，代码块 {res['chunks_written']}，"

@@ -91,6 +91,14 @@ class KnowledgeStore:
         finally:
             conn.close()
 
+    def file_paths(self, workspace: str) -> List[str]:
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT path FROM kb_file WHERE workspace=?", (workspace,)).fetchall()
+            return [str(r[0]) for r in rows]
+        finally:
+            conn.close()
+
     def file_hash(self, workspace: str, path: str) -> Optional[str]:
         conn = self._connect()
         try:
@@ -123,19 +131,33 @@ class KnowledgeStore:
 
     def insert_chunk(self, workspace: str, kind: str, ref_id: str, path: str,
                      lines: str, symbol: str, text: str, chash: str) -> int:
-        toks = " ".join(tokenize(f"{symbol} {path} {text}"))
+        return self.insert_chunks(workspace, kind, path, [{
+            "ref_id": ref_id, "lines": lines, "symbol": symbol,
+            "text": text, "hash": chash,
+        }])[0]
+
+    def insert_chunks(self, workspace: str, kind: str, path: str,
+                      chunks: List[Dict[str, Any]]) -> List[int]:
         conn = self._connect()
         try:
-            self._delete_ref_chunks(conn, workspace, ref_id)
-            cur = conn.execute(
-                "INSERT INTO chunk(workspace,kind,ref_id,path,lines,symbol,text,tokens,hash) "
-                "VALUES(?,?,?,?,?,?,?,?,?)",
-                (workspace, kind, ref_id, path, lines, symbol, text, toks, chash))
-            rid = int(cur.lastrowid)
-            conn.execute("INSERT INTO chunk_fts(rowid,text,path,symbol,tokens) VALUES(?,?,?,?,?)",
-                         (rid, text, path, symbol, toks))
+            for ref_id in dict.fromkeys(str(c["ref_id"]) for c in chunks):
+                self._delete_ref_chunks(conn, workspace, ref_id)
+            rids = []
+            for c in chunks:
+                text = c.get("text") or ""
+                symbol = c.get("symbol") or ""
+                toks = " ".join(tokenize(f"{symbol} {path} {text}"))
+                cur = conn.execute(
+                    "INSERT INTO chunk(workspace,kind,ref_id,path,lines,symbol,text,tokens,hash) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    (workspace, kind, str(c["ref_id"]), path, c.get("lines", ""),
+                     symbol, text, toks, c.get("hash", "")))
+                rid = int(cur.lastrowid)
+                conn.execute("INSERT INTO chunk_fts(rowid,text,path,symbol,tokens) VALUES(?,?,?,?,?)",
+                             (rid, text, path, symbol, toks))
+                rids.append(rid)
             conn.commit()
-            return rid
+            return rids
         finally:
             conn.close()
 
@@ -314,13 +336,40 @@ class KnowledgeStore:
     def reset(self, workspace: str) -> None:
         conn = self._connect()
         try:
-            for tbl in ("edge", "symbol", "doc_chunk", "card", "chunk", "kb_file"):
-                conn.execute(f"DELETE FROM {tbl} WHERE workspace=?", (workspace,))
-            # fts rows for this workspace
             rids = [r[0] for r in conn.execute(
                 "SELECT rid FROM chunk WHERE workspace=?", (workspace,)).fetchall()]
             if rids:
                 conn.executemany("DELETE FROM chunk_fts WHERE rowid=?", [(r,) for r in rids])
+            for tbl in ("edge", "symbol", "doc_chunk", "card", "chunk", "kb_file"):
+                conn.execute(f"DELETE FROM {tbl} WHERE workspace=?", (workspace,))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+    def rename_workspace(self, old_workspace: str, new_workspace: str) -> None:
+        if old_workspace == new_workspace:
+            return
+        version = self.get_meta(f"index_format:{old_workspace}")
+        conn = self._connect()
+        try:
+            for table in ("kb_file", "symbol", "edge", "doc_chunk", "card", "chunk", "boost"):
+                conn.execute(f"UPDATE {table} SET workspace=? WHERE workspace=?",
+                             (new_workspace, old_workspace))
+            if version is not None:
+                conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                             (f"index_format:{new_workspace}", version))
+                conn.execute("DELETE FROM meta WHERE key=?", (f"index_format:{old_workspace}",))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def delete_workspace(self, workspace: str) -> None:
+        self.reset(workspace)
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM boost WHERE workspace=?", (workspace,))
+            conn.execute("DELETE FROM meta WHERE key=?", (f"index_format:{workspace}",))
             conn.commit()
         finally:
             conn.close()

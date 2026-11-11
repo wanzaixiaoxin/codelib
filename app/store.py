@@ -141,7 +141,8 @@ CREATE TABLE IF NOT EXISTS managed_workspaces (
     name TEXT NOT NULL,
     path TEXT NOT NULL,
     description TEXT DEFAULT '',
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    disabled INTEGER DEFAULT 0
 );"""
 
 
@@ -165,6 +166,9 @@ class Store:
             cols = {r[1] for r in conn.execute("PRAGMA table_info(chat_sessions)")}
             if "owner_user_id" not in cols:
                 conn.execute("ALTER TABLE chat_sessions ADD COLUMN owner_user_id INTEGER DEFAULT 0")
+            ws_cols = {r[1] for r in conn.execute("PRAGMA table_info(managed_workspaces)")}
+            if "disabled" not in ws_cols:
+                conn.execute("ALTER TABLE managed_workspaces ADD COLUMN disabled INTEGER DEFAULT 0")
             conn.commit()
         finally:
             conn.close()
@@ -353,7 +357,9 @@ class Store:
         conn = self._connect()
         try:
             conn.execute(
-                "INSERT INTO managed_workspaces(id,name,path,description,created_at) VALUES(?,?,?,?,?)",
+                "INSERT INTO managed_workspaces(id,name,path,description,created_at,disabled) VALUES(?,?,?,?,?,0) "
+                "ON CONFLICT(id) DO UPDATE SET name=excluded.name,path=excluded.path,"
+                "description=excluded.description,disabled=0",
                 (workspace_id, name, path, description, now))
             conn.commit()
         except sqlite3.IntegrityError as exc:
@@ -363,11 +369,60 @@ class Store:
         return {"id": workspace_id, "name": name, "path": path,
                 "description": description, "created_at": now}
 
+    def get_managed_workspace(self, workspace_id: str) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM managed_workspaces WHERE id=?", (workspace_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def disable_managed_workspace(self, workspace_id: str, name: str, path: str,
+                                  description: str = "") -> None:
+        self.add_managed_workspace(workspace_id, name, path, description)
+        conn = self._connect()
+        try:
+            conn.execute("UPDATE managed_workspaces SET disabled=1 WHERE id=?", (workspace_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def delete_managed_workspace(self, workspace_id: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM managed_workspaces WHERE id=?", (workspace_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def delete_workspace_data(self, workspace_id: str) -> Dict[str, int]:
+        conn = self._connect()
+        try:
+            trace_ids = [r[0] for r in conn.execute(
+                "SELECT trace_id FROM trace WHERE workspace_id=?", (workspace_id,)).fetchall()]
+            if trace_ids:
+                q = ",".join("?" for _ in trace_ids)
+                conn.execute(f"DELETE FROM trace_event WHERE trace_id IN ({q})", trace_ids)
+            sessions = int(conn.execute("SELECT COUNT(*) FROM chat_sessions WHERE workspace_id=?",
+                                        (workspace_id,)).fetchone()[0])
+            for table in ("audit", "trace", "conversations", "chat_sessions", "qa_memory",
+                          "facts", "change_events", "chunks", "files", "user_workspace_access"):
+                key = "trace_id" if table == "audit" else "workspace_id"
+                if table == "audit":
+                    conn.execute("DELETE FROM audit WHERE workspace_id=?", (workspace_id,))
+                else:
+                    conn.execute(f"DELETE FROM {table} WHERE {key}=?", (workspace_id,))
+            conn.execute("DELETE FROM meta WHERE key=?", (f"gen:{workspace_id}",))
+            conn.commit()
+            return {"conversations": sessions, "traces": len(trace_ids)}
+        finally:
+            conn.close()
+
     def list_managed_workspaces(self) -> List[Dict[str, Any]]:
         conn = self._connect()
         try:
             return [dict(r) for r in conn.execute(
-                "SELECT id,name,path,description,created_at FROM managed_workspaces ORDER BY created_at").fetchall()]
+                "SELECT id,name,path,description,created_at,disabled FROM managed_workspaces ORDER BY created_at").fetchall()]
         finally:
             conn.close()
 
@@ -730,9 +785,11 @@ class Store:
                       owner_user_id: Optional[int] = None) -> List[Dict[str, Any]]:
         conn = self._connect()
         try:
-            sql = ("SELECT s.id, s.workspace_id, s.title, s.created_at, s.updated_at, "
+            sql = ("SELECT s.id, s.workspace_id, s.title, s.owner_user_id, s.created_at, s.updated_at, "
                    "(SELECT content FROM conversations c WHERE c.session_id=s.id "
-                   " ORDER BY c.id DESC LIMIT 1) AS last_message "
+                   " ORDER BY c.id DESC LIMIT 1) AS last_message, "
+                   "(SELECT COUNT(*) FROM conversations c WHERE c.session_id=s.id) AS message_count, "
+                   "(SELECT username FROM users u WHERE u.id=s.owner_user_id) AS owner_username "
                    "FROM chat_sessions s ")
             params: List[Any] = []
             conditions = []

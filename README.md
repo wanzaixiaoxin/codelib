@@ -52,11 +52,16 @@ New-NetFirewallRule -DisplayName "codelib 8000" -Direction Inbound -Protocol TCP
 
 Windows 也可以双击仓库根目录的 `start.bat`，或在 PowerShell 运行 `./start.ps1`。首次启动且账号库为空时，脚本默认创建用户名 `admin`，并安全提示输入至少 8 位的管理员密码；密码只写入 SQLite 的哈希，不保存在脚本中。已有账号后会直接启动，不再提示或覆盖密码。需要自定义初始用户名时，启动前设置环境变量 `CODELIB_ADMIN_USERNAME`。
 
-### 再加一个库
+### 知识库与对话管理
 
-管理员登录工作台，打开「账号/知识库管理」，填写知识库名称和工程目录即可创建并建索引；再给普通账号分配该库的访问权限。也可以使用管理员 API 创建。新建库信息保存在 SQLite，不必改配置文件。
+管理员登录工作台，打开「账号/知识库管理」即可：
 
-启动时配置文件里的 `workspaces:` 仍可定义只读的初始知识库；这些库默认仅管理员可见，普通账号需要管理员授权。
+- 查看每个库的路径、来源、索引版本、文件/文档块/符号/图边统计；
+- 创建库，编辑名称、目录与说明，执行增量或全量重建；
+- 删除库及其授权、对话、记忆、留痕和索引，但不会删除源工程文件；
+- 给普通账号分配库权限，并查看、打开、重命名或删除对话。
+
+配置库与动态库都可管理。对配置库的修改和删除会作为覆盖记录持久化到 SQLite，重启后仍然生效；删除后可重新创建同 ID 的库。新建库不必改配置文件。
 
 命令行建库仍可用于配置文件里已定义的库：
 
@@ -78,6 +83,9 @@ python -m app kb-build --workspace <新id>
 | GET | `/api/workspaces` | 当前账号可访问的库列表 |
 | GET | `/api/admin/workspaces` | 管理员查看全部知识库 |
 | POST | `/api/admin/workspaces` | 管理员创建并索引知识库 `{name,id?,path,description?}` |
+| PUT | `/api/admin/workspaces/{id}` | 编辑名称、目录和说明；目录变化时自动全量重建 |
+| POST | `/api/admin/workspaces/{id}/rebuild` | 增量/全量重建 `{full}` |
+| DELETE | `/api/admin/workspaces/{id}` | 删除库及其授权、对话、记忆、留痕和索引，不删源工程 |
 | GET/POST | `/api/admin/users` | 管理员查看/创建账号 |
 | PUT | `/api/admin/users/{id}/workspaces` | 管理员设置普通账号可访问的知识库 |
 | PUT | `/api/admin/users/{id}/password` | 管理员重置账号密码并注销旧会话 |
@@ -87,6 +95,7 @@ python -m app kb-build --workspace <新id>
 | GET | `/api/conversations` | 历史对话列表 |
 | GET | `/api/conversations/{id}` | 某对话全部消息 |
 | POST | `/api/conversations/{id}/messages` | 在该对话提问 `{content}` |
+| PATCH | `/api/conversations/{id}` | 重命名对话 `{title}` |
 | DELETE | `/api/conversations/{id}` | 删除对话 |
 | POST | `/ask` | 登录后单次问答（供程序调用） |
 | GET/POST | `/channels/wecom/callback` | 企业微信 |
@@ -127,9 +136,10 @@ curl -s -b cookies.txt http://127.0.0.1:8000/ask \
 
 在原有“签名块”之外，新增 **代码知识工程层**（进程内、单 SQLite 文件、无容器/无本地模型）：
 
-- 代码：**tree-sitter** 抽函数/类/方法 + 邻接边（调用/引用……，启发式）
+- 知识组织：文件级结构摘要 + 函数/类/方法精确行号；长函数与长文档自适应分段，避免只保留开头
+- 代码：**tree-sitter** 抽符号 + 精确标识符邻接边（调用/引用仍为启发式）
 - 文档：**markitdown** + python-docx/pptx/openpyxl + pypdf（PDF/Word/PPT/Excel/MD）
-- 检索：**SQLite FTS5（BM25）+ 中英同义词扩写**，可选 LLM 重排
+- 检索：**SQLite FTS5（BM25）+ 中英同义词 + 多子句覆盖融合**，可选 LLM 重排与最多三跳邻接扩展
 - 生成：仍走你的 LLM API（现有 `3425` 网关）
 
 ```bash
@@ -140,9 +150,9 @@ python -m app kb-build --workspace gateway --full # 全量重建
 python -m app kb-stats                            # 看统计
 ```
 
-建库后 `bot` 会**自动优先使用知识库**（库为空时自动回退旧检索），无需改配置。默认启用 LLM 重排；分析类问题还会做一次回答覆盖检查，发现缺口时补检索并修订，因此会增加模型调用和响应时间。
+建库后 `bot` 会**自动优先使用知识库**（库为空时自动回退旧检索），无需改配置。默认启用 LLM 重排；复杂问题会生成结构化子查询，分析类问题按缺口补检索、修订并复核关键断言的证据。`!deep` 至少扩展两跳并允许最多三轮修订，因此会增加模型调用和响应时间。
 
-> 当前网关没有 `/v1/embeddings`，所以暂用“词法检索 + 同义词”；一旦你拿到任意 OpenAI 兼容 embedding API，在 `knowledge.embedding.mode: api` 打开即可升级混合检索（胶水已预留）。
+> 建库格式已升级：旧库下次执行 `kb-build` 会自动全量重建，无需手工删库。当前检索仍是词法检索与同义词扩展，尚未实现向量索引；`knowledge.embedding.mode` 目前不会启用混合检索。
 
 ---
 
@@ -400,6 +410,8 @@ python tests/feedback_test.py  # 评估闭环：结论→boost 规则→检索�
 python tests/gate_test.py      # 证据门槛 / 同问题缓存 / 评估分流（不硬答、不固化负结果）
 python tests/llm_test.py       # 大模型配置与请求构造（不联网）
 python tests/llm_live_test.py  # 本地假大模型端到端 + 失败降级
+python tests/core_quality_test.py # 长切片 / 文件摘要 / 子问题覆盖 / 多跳与断言接地
+python tests/admin_workspace_test.py # 知识库生命周期 / 对话管理 / 重启持久化 / 越权拦截
 ```
 
 以上均已通过。

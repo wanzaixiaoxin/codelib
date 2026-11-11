@@ -1,7 +1,4 @@
-"""在线检索：FTS5 BM25（+中英同义词扩写）→ 可选 LLM 重排 → 邻接图扩展 → 预算打包。
-
-默认只用 1 次 LLM（最终作答）；重排默认关闭，可在配置里打开。
-"""
+"""在线检索：FTS5 BM25（+中英同义词扩写）→ 多查询融合/可选重排 → 图扩展 → 全局预算打包。"""
 from __future__ import annotations
 
 import re
@@ -87,6 +84,18 @@ def _query_tokens(question: str, cfg: AppConfig) -> List[str]:
     return list(dict.fromkeys(toks))
 
 
+def _query_variants(question: str) -> List[str]:
+    """Search the full question and substantive comma-separated clauses independently."""
+    clauses = [x.strip() for x in re.split(r"[，,；;。\n]+", question or "") if x.strip()]
+    out = [question.strip()] if question and question.strip() else []
+    for clause in clauses:
+        if len(clause) >= 6 and clause not in out:
+            out.append(clause)
+        if len(out) >= 4:
+            break
+    return out
+
+
 def _rrf(hits_list: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     scores: Dict[int, float] = {}
     keep: Dict[int, Dict[str, Any]] = {}
@@ -111,7 +120,7 @@ async def _llm_rerank(llm, question: str, cands: List[Dict[str, Any]],
     system = ("你是代码检索相关性裁判。根据用户问题，从候选里选出真正能回答问题的前 N 个，"
               "忽略只是关键词相近但无关的。只输出编号（从1开始），逗号分隔，按相关度降序。")
     lines = []
-    for i, c in enumerate(cands[:24], 1):
+    for i, c in enumerate(cands, 1):
         snippet = clip((c.get("text") or "").replace("\n", " "), 160)
         lines.append(f"{i}. {c.get('path','')} | {c.get('symbol','')} | {snippet}")
     user = f"问题：{question}\n\n候选：\n" + "\n".join(lines) + f"\n\n只输出前 {top_n} 个编号："
@@ -130,8 +139,8 @@ async def _llm_rerank(llm, question: str, cands: List[Dict[str, Any]],
 
 
 async def build_context(kb: KnowledgeStore, cfg: AppConfig, ws: WorkspaceConfig,
-                        question: str, budget_tokens: int = 3500, top_k: int = 16,
-                        deep_top_k: int = 3, llm=None
+                        question: str, budget_tokens: int = 4000, top_k: int = 40,
+                        deep_top_k: int = 3, llm=None, deep: bool = False
                         ) -> Tuple[str, List[Citation], int]:
     from .build import ws_kb_id
     kbkey = ws_kb_id(ws.id, ws.name)
@@ -139,8 +148,9 @@ async def build_context(kb: KnowledgeStore, cfg: AppConfig, ws: WorkspaceConfig,
     if kb.counts(kbkey)["chunks"] == 0:
         return "", [], 0
 
-    tokens = _query_tokens(question, cfg)
-    hits = [kb.search(kbkey, tokens, limit=max(top_k * 2, 30))]
+    variants = _query_variants(question)
+    hits = [kb.search(kbkey, _query_tokens(q, cfg), limit=max(top_k * 2, 30))
+            for q in variants]
     fused = _rrf(hits)
 
     # 评估闭环：用已沉淀的“召回提示”对候选加权
@@ -148,9 +158,9 @@ async def build_context(kb: KnowledgeStore, cfg: AppConfig, ws: WorkspaceConfig,
     kb_cfg = cfg.knowledge or {}
     rerank_cfg = kb_cfg.get("rerank", {}) or {}
     mode = str(rerank_cfg.get("mode", "none"))
-    top_n = int(rerank_cfg.get("top_n", max(deep_top_k, 6)))
+    top_n = max(1, int(rerank_cfg.get("top_n", 10))) * (2 if deep else 1)
     if mode == "llm":
-        cands = await _llm_rerank(llm, question, fused[:24], top_n)
+        cands = await _llm_rerank(llm, question, fused[:max(top_k, top_n)], top_n)
     else:
         cands = fused[:top_n]
 
@@ -164,6 +174,7 @@ async def build_context(kb: KnowledgeStore, cfg: AppConfig, ws: WorkspaceConfig,
             d = dict(c)
             d["score"] = 0.0
             expanded.append(d)
+    max_parts = top_n + min(4, max(0, len(expanded) - len(cands)))
 
     parts: List[str] = []
     citations: List[Citation] = []
@@ -191,6 +202,6 @@ async def build_context(kb: KnowledgeStore, cfg: AppConfig, ws: WorkspaceConfig,
         citations.append(Citation(path=c.get("path", ""), start_line=a, end_line=b,
                                   symbol=c.get("symbol", ""), kind=c.get("kind", ""),
                                   score=float(c.get("score", 0.0))))
-        if len(parts) >= max(top_n, 8):
+        if len(parts) >= max(max_parts, 8):
             break
     return "\n\n".join(parts), citations, used

@@ -71,7 +71,7 @@ def main() -> int:
         default_workspace="demo",
         workspaces=[WorkspaceConfig(
             id="demo", name="Demo", path=str(proj),
-            index=IndexConfig(token_budget=800, auto_reindex_on_query=True),
+            index=IndexConfig(auto_reindex_on_query=True),
         )],
         memory={"enabled": True},
     )
@@ -92,10 +92,10 @@ def main() -> int:
     assert ans.citations, "应检索到引用"
     assert any("gateway.py" in c.path for c in ans.citations), "应命中 gateway.py"
 
-    print("\n== 3. 记忆召回 ==")
+    print("\n== 3. 降级摘要不进入答案记忆/缓存 ==")
     ans2 = asyncio.run(bot.handle("demo", "消息网关如何路由消息？", "s2"))
-    print("memory_hits:", len(ans2.memory_hits))
-    assert ans2.memory_hits, "第二次相同问题应命中历史记忆"
+    print("memory_hits:", len(ans2.memory_hits), "| llm_used:", ans2.llm_used)
+    assert not ans2.memory_hits and not ans2.llm_used, "检索摘要不应被当作可靠答案记忆"
 
     print("\n== 4. 变更感知 ==")
     gw = proj / "src" / "gateway.py"

@@ -20,6 +20,7 @@ _tmp = Path(tempfile.mkdtemp(prefix="codelib_web_"))
 _cfg = _tmp / "config.yaml"
 _cfg.write_text(yaml.safe_dump({
     "app": {"host": "127.0.0.1", "port": 8000, "data_dir": str(_tmp / "data")},
+    "auth": {"bootstrap_admin": {"username": "admin", "password": "test-admin-pass"}},
     "workspace": {"id": "sample", "name": "sample", "path": str(ROOT / "sample_workspace")},
     "llm": {"type": "openai_compatible", "base_url": "", "api_key": "", "model": ""},
     "memory": {"enabled": True},
@@ -42,9 +43,15 @@ def main() -> int:
         indexer.index_workspace(store, ws, full=True)
 
     with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "admin", "password": "test-admin-pass"})
+        assert login.status_code == 200, login.text
         r = client.get("/")
         print("GET / ->", r.status_code, "含新建对话:", "新建对话" in r.text)
         assert r.status_code == 200 and "新建对话" in r.text
+        assert '<script src="/static/markdown-it.min.js"></script>' in r.text
+        assert "bub.innerHTML=renderMarkdown(text)" in r.text
+        vendor = client.get("/static/markdown-it.min.js")
+        assert vendor.status_code == 200 and "markdown-it 14.1.0" in vendor.text[:100]
 
         ws = client.get("/api/workspaces").json()["workspaces"]
         print("workspaces:", ws)

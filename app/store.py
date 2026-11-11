@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     id           TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
     title        TEXT DEFAULT '',
+    owner_user_id INTEGER DEFAULT 0,
     created_at   REAL NOT NULL,
     updated_at   REAL NOT NULL
 );
@@ -111,6 +112,36 @@ CREATE TABLE IF NOT EXISTS audit (
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('admin','user')),
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at REAL NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at);
+CREATE TABLE IF NOT EXISTS user_workspace_access (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id TEXT NOT NULL,
+    granted_by INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    PRIMARY KEY(user_id, workspace_id)
+);
+CREATE TABLE IF NOT EXISTS managed_workspaces (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    created_at REAL NOT NULL
 );"""
 
 
@@ -131,7 +162,212 @@ class Store:
         conn = self._connect()
         try:
             conn.executescript(_SCHEMA)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(chat_sessions)")}
+            if "owner_user_id" not in cols:
+                conn.execute("ALTER TABLE chat_sessions ADD COLUMN owner_user_id INTEGER DEFAULT 0")
             conn.commit()
+        finally:
+            conn.close()
+
+    # ---------------- users / authentication ----------------
+    @staticmethod
+    def _password_digest(password: str, salt: bytes) -> str:
+        import hashlib
+        return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 310_000).hex()
+
+    def create_user(self, username: str, password: str, role: str = "user") -> Dict[str, Any]:
+        import secrets
+        username = (username or "").strip()
+        if not 2 <= len(username) <= 64:
+            raise ValueError("用户名长度必须为 2 到 64 个字符")
+        if len(password or "") < 8:
+            raise ValueError("密码至少需要 8 个字符")
+        if role not in ("admin", "user"):
+            raise ValueError("角色只能是 admin 或 user")
+        salt = secrets.token_bytes(16)
+        now = time.time()
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                "INSERT INTO users(username,password_hash,password_salt,role,created_at) VALUES(?,?,?,?,?)",
+                (username, self._password_digest(password, salt), salt.hex(), role, now))
+            conn.commit()
+            return {"id": int(cur.lastrowid), "username": username, "role": role,
+                    "active": True, "created_at": now, "workspace_ids": []}
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("用户名已存在") from exc
+        finally:
+            conn.close()
+
+    def bootstrap_admin(self, username: str, password: str) -> Optional[Dict[str, Any]]:
+        if not username or not password:
+            return None
+        conn = self._connect()
+        try:
+            count = int(conn.execute("SELECT COUNT(*) FROM users").fetchone()[0])
+        finally:
+            conn.close()
+        if count:
+            return None
+        return self.create_user(username, password, "admin")
+
+    def authenticate_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT id,username,password_hash,password_salt,role,active,created_at "
+                "FROM users WHERE username=? COLLATE NOCASE", ((username or "").strip(),)
+            ).fetchone()
+            if not row or not row["active"]:
+                return None
+            try:
+                salt = bytes.fromhex(row["password_salt"])
+            except ValueError:
+                return None
+            import hmac
+            digest = self._password_digest(password or "", salt)
+            if not hmac.compare_digest(digest, row["password_hash"]):
+                return None
+            return {"id": int(row["id"]), "username": row["username"],
+                    "role": row["role"], "active": bool(row["active"]),
+                    "created_at": row["created_at"]}
+        finally:
+            conn.close()
+
+    def create_auth_session(self, user_id: int, token_hash: str, expires_at: float) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM auth_sessions WHERE expires_at<=?", (time.time(),))
+            conn.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)",
+                         (token_hash, int(user_id), float(expires_at), time.time()))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def user_for_session(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT u.id,u.username,u.role,u.active,u.created_at FROM auth_sessions s "
+                "JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?",
+                (token_hash, time.time())).fetchone()
+            if not row or not row["active"]:
+                return None
+            return {"id": int(row["id"]), "username": row["username"],
+                    "role": row["role"], "active": bool(row["active"]),
+                    "created_at": row["created_at"]}
+        finally:
+            conn.close()
+
+    def revoke_auth_session(self, token_hash: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM auth_sessions WHERE token_hash=?", (token_hash,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_users(self) -> List[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            users = [dict(r) for r in conn.execute(
+                "SELECT id,username,role,active,created_at FROM users ORDER BY username COLLATE NOCASE").fetchall()]
+            for user in users:
+                user["active"] = bool(user["active"])
+                user["workspace_ids"] = [r[0] for r in conn.execute(
+                    "SELECT workspace_id FROM user_workspace_access WHERE user_id=? ORDER BY workspace_id",
+                    (user["id"],)).fetchall()]
+            return users
+        finally:
+            conn.close()
+
+    def user_workspace_ids(self, user_id: int) -> List[str]:
+        conn = self._connect()
+        try:
+            return [r[0] for r in conn.execute(
+                "SELECT workspace_id FROM user_workspace_access WHERE user_id=? ORDER BY workspace_id",
+                (int(user_id),)).fetchall()]
+        finally:
+            conn.close()
+
+    def has_workspace_access(self, user_id: int, workspace_id: str) -> bool:
+        conn = self._connect()
+        try:
+            return conn.execute(
+                "SELECT 1 FROM user_workspace_access WHERE user_id=? AND workspace_id=?",
+                (int(user_id), workspace_id)).fetchone() is not None
+        finally:
+            conn.close()
+
+    def set_user_workspaces(self, user_id: int, workspace_ids: List[str], granted_by: int) -> None:
+        conn = self._connect()
+        try:
+            if not conn.execute("SELECT 1 FROM users WHERE id=?", (int(user_id),)).fetchone():
+                raise KeyError("用户不存在")
+            conn.execute("DELETE FROM user_workspace_access WHERE user_id=?", (int(user_id),))
+            conn.executemany(
+                "INSERT INTO user_workspace_access(user_id,workspace_id,granted_by,created_at) VALUES(?,?,?,?)",
+                [(int(user_id), wid, int(granted_by), time.time()) for wid in dict.fromkeys(workspace_ids)])
+            conn.commit()
+        finally:
+            conn.close()
+
+    def set_user_active(self, user_id: int, active: bool) -> None:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT role,active FROM users WHERE id=?", (int(user_id),)).fetchone()
+            if not row:
+                raise KeyError("用户不存在")
+            if not active and row["role"] == "admin" and row["active"]:
+                n_admins = int(conn.execute(
+                    "SELECT COUNT(*) FROM users WHERE role='admin' AND active=1").fetchone()[0])
+                if n_admins <= 1:
+                    raise ValueError("不能停用最后一个管理员账号")
+            conn.execute("UPDATE users SET active=? WHERE id=?", (1 if active else 0, int(user_id)))
+            if not active:
+                conn.execute("DELETE FROM auth_sessions WHERE user_id=?", (int(user_id),))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def reset_user_password(self, user_id: int, password: str) -> None:
+        if len(password or "") < 8:
+            raise ValueError("密码至少需要 8 个字符")
+        import secrets
+        salt = secrets.token_bytes(16)
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                "UPDATE users SET password_hash=?,password_salt=? WHERE id=?",
+                (self._password_digest(password, salt), salt.hex(), int(user_id)))
+            if cur.rowcount == 0:
+                raise KeyError("用户不存在")
+            conn.execute("DELETE FROM auth_sessions WHERE user_id=?", (int(user_id),))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def add_managed_workspace(self, workspace_id: str, name: str, path: str,
+                              description: str = "") -> Dict[str, Any]:
+        now = time.time()
+        conn = self._connect()
+        try:
+            conn.execute(
+                "INSERT INTO managed_workspaces(id,name,path,description,created_at) VALUES(?,?,?,?,?)",
+                (workspace_id, name, path, description, now))
+            conn.commit()
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("知识库 ID 已存在") from exc
+        finally:
+            conn.close()
+        return {"id": workspace_id, "name": name, "path": path,
+                "description": description, "created_at": now}
+
+    def list_managed_workspaces(self) -> List[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            return [dict(r) for r in conn.execute(
+                "SELECT id,name,path,description,created_at FROM managed_workspaces ORDER BY created_at").fetchall()]
         finally:
             conn.close()
 
@@ -474,22 +710,24 @@ class Store:
             conn.close()
 
     # ---------------- chat sessions（网页对话）----------------
-    def create_session(self, session_id: str, workspace_id: str, title: str = "新对话") -> Dict[str, Any]:
+    def create_session(self, session_id: str, workspace_id: str, title: str = "新对话",
+                       owner_user_id: int = 0) -> Dict[str, Any]:
         now = time.time()
         conn = self._connect()
         try:
             conn.execute(
-                "INSERT OR REPLACE INTO chat_sessions(id,workspace_id,title,created_at,updated_at) "
-                "VALUES(?,?,?,?,?)",
-                (session_id, workspace_id, title or "新对话", now, now),
+                "INSERT OR REPLACE INTO chat_sessions(id,workspace_id,title,owner_user_id,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (session_id, workspace_id, title or "新对话", int(owner_user_id), now, now),
             )
             conn.commit()
         finally:
             conn.close()
-        return {"id": session_id, "workspace_id": workspace_id,
+        return {"id": session_id, "workspace_id": workspace_id, "owner_user_id": int(owner_user_id),
                 "title": title or "新对话", "created_at": now, "updated_at": now}
 
-    def list_sessions(self, workspace_id: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
+    def list_sessions(self, workspace_id: Optional[str] = None, limit: int = 200,
+                      owner_user_id: Optional[int] = None) -> List[Dict[str, Any]]:
         conn = self._connect()
         try:
             sql = ("SELECT s.id, s.workspace_id, s.title, s.created_at, s.updated_at, "
@@ -497,9 +735,15 @@ class Store:
                    " ORDER BY c.id DESC LIMIT 1) AS last_message "
                    "FROM chat_sessions s ")
             params: List[Any] = []
+            conditions = []
             if workspace_id:
-                sql += "WHERE s.workspace_id=? "
+                conditions.append("s.workspace_id=?")
                 params.append(workspace_id)
+            if owner_user_id is not None:
+                conditions.append("s.owner_user_id=?")
+                params.append(int(owner_user_id))
+            if conditions:
+                sql += "WHERE " + " AND ".join(conditions) + " "
             sql += "ORDER BY s.updated_at DESC LIMIT ?"
             params.append(limit)
             rows = conn.execute(sql, params).fetchall()
@@ -511,24 +755,27 @@ class Store:
         conn = self._connect()
         try:
             row = conn.execute(
-                "SELECT id,workspace_id,title,created_at,updated_at FROM chat_sessions WHERE id=?",
+                "SELECT id,workspace_id,title,owner_user_id,created_at,updated_at FROM chat_sessions WHERE id=?",
                 (session_id,),
             ).fetchone()
             return dict(row) if row else None
         finally:
             conn.close()
 
-    def find_empty_session(self, workspace_id: str) -> Optional[Dict[str, Any]]:
+    def find_empty_session(self, workspace_id: str,
+                           owner_user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """查找该库里「还没发过任何消息」的空对话（用于复用，避免无限新建）。"""
         conn = self._connect()
         try:
-            row = conn.execute(
-                "SELECT s.id, s.workspace_id, s.title, s.created_at, s.updated_at FROM chat_sessions s "
-                "WHERE s.workspace_id=? AND NOT EXISTS "
-                "(SELECT 1 FROM conversations c WHERE c.session_id = s.id) "
-                "ORDER BY s.updated_at DESC LIMIT 1",
-                (workspace_id,),
-            ).fetchone()
+            sql = ("SELECT s.id, s.workspace_id, s.title, s.owner_user_id,s.created_at,s.updated_at "
+                   "FROM chat_sessions s WHERE s.workspace_id=? ")
+            params: List[Any] = [workspace_id]
+            if owner_user_id is not None:
+                sql += "AND s.owner_user_id=? "
+                params.append(int(owner_user_id))
+            sql += ("AND NOT EXISTS (SELECT 1 FROM conversations c WHERE c.session_id=s.id) "
+                    "ORDER BY s.updated_at DESC LIMIT 1")
+            row = conn.execute(sql, params).fetchone()
             return dict(row) if row else None
         finally:
             conn.close()
@@ -542,25 +789,31 @@ class Store:
         finally:
             conn.close()
 
-    def cleanup_empty_sessions(self, workspace_id: Optional[str] = None) -> int:
-        """删除多余的空对话，保证每个库最多保留一个空对话。"""
+    def cleanup_empty_sessions(self, workspace_id: Optional[str] = None,
+                               owner_user_id: Optional[int] = None) -> int:
+        """删除多余空对话，每个用户在每个知识库保留一个。"""
         conn = self._connect()
         try:
+            sql = "SELECT s.id,s.workspace_id,s.owner_user_id FROM chat_sessions s WHERE 1=1 "
+            params: List[Any] = []
             if workspace_id:
-                rows = conn.execute(
-                    "SELECT s.id FROM chat_sessions s WHERE s.workspace_id=? AND NOT EXISTS "
-                    "(SELECT 1 FROM conversations c WHERE c.session_id=s.id) "
-                    "ORDER BY s.updated_at DESC", (workspace_id,)).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT s.id FROM chat_sessions s WHERE NOT EXISTS "
-                    "(SELECT 1 FROM conversations c WHERE c.session_id=s.id) "
-                    "ORDER BY s.updated_at DESC").fetchall()
-            keep = rows[0]["id"] if rows else None
+                sql += "AND s.workspace_id=? "
+                params.append(workspace_id)
+            if owner_user_id is not None:
+                sql += "AND s.owner_user_id=? "
+                params.append(int(owner_user_id))
+            sql += ("AND NOT EXISTS (SELECT 1 FROM conversations c WHERE c.session_id=s.id) "
+                    "ORDER BY s.workspace_id, s.owner_user_id, s.updated_at DESC")
+            rows = conn.execute(sql, params).fetchall()
+            seen = set()
             removed = 0
-            for r in rows[1:]:
-                conn.execute("DELETE FROM chat_sessions WHERE id=?", (r["id"],))
-                removed += 1
+            for r in rows:
+                key = (r["workspace_id"], r["owner_user_id"])
+                if key in seen:
+                    conn.execute("DELETE FROM chat_sessions WHERE id=?", (r["id"],))
+                    removed += 1
+                else:
+                    seen.add(key)
             conn.commit()
             return removed
         finally:

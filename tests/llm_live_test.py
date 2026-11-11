@@ -60,7 +60,7 @@ def _cfg(tmp: Path, llm: LLMConfig) -> AppConfig:
         data_dir=str(tmp / "data"), default_workspace="demo",
         workspaces=[WorkspaceConfig(id="demo", name="demo",
                                     path=str(ROOT / "sample_workspace"),
-                                    index=IndexConfig(token_budget=800))],
+                                    index=IndexConfig())],
         memory={"enabled": True}, llm=llm,
     )
 

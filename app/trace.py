@@ -5,6 +5,7 @@
   intent     多轮理解/改写结果（retrieval_query / effective_question）
   index      索引/变更检测情况
   retrieve   检索到的片段（候选、选中、用到的 token）
+  evidence   词面覆盖的命中、缺失、忽略的工程名及门槛
   prompt     实际发给大模型的 system + user（完整协议内容）
   llm        大模型返回（原文、finish_reason、usage、耗时）
   answer     最终答案 + 来源

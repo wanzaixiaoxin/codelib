@@ -1,6 +1,6 @@
 # codelib — 代码问答机器人（极简版）
 
-把**一个代码目录**接成可问答的机器人：内置**网页对话界面**，也支持**企业微信 / 飞书**接入与普通 HTTP 调用；内置**增量索引、变更感知、长期记忆、省 token 检索**，对目标工程**只读**。
+把代码目录接成可问答的机器人：内置**网页对话界面**，支持多个知识库、管理员与普通账号；也支持**企业微信 / 飞书**接入与普通 HTTP 调用。内置**增量索引、变更感知、长期记忆、省 token 检索**，对目标工程**只读**。
 
 设计原则：**配置少、接口少**。大模型只配一个；日常管理走对话命令。
 
@@ -15,6 +15,7 @@
 
 - 左侧**知识库列表**：显示每个库是否已建库、块数/符号数；点选即在该库下新建对话；
 - **每个对话固定绑定一个库**，提问只在该库内检索，不会串库；
+- AI 回答支持 Markdown 标题、列表、表格、引用和代码块；解析器随服务本地提供，工作台不依赖外网加载；
 - **历史对话**按时间列出，可回看、继续追问；
 - 页面顶部与侧栏标注「🔒 只读模式」：**服务没有任何修改工程文件的接口**。
 
@@ -49,9 +50,15 @@ New-NetFirewallRule -DisplayName "codelib 8000" -Direction Inbound -Protocol TCP
 
 如需开机自启，可用 NSSM 或「任务计划程序」把 `python -m app --config config/config.yaml serve --port 8000` 注册为服务。
 
+Windows 也可以双击仓库根目录的 `start.bat`，或在 PowerShell 运行 `./start.ps1`。首次启动且账号库为空时，脚本默认创建用户名 `admin`，并安全提示输入至少 8 位的管理员密码；密码只写入 SQLite 的哈希，不保存在脚本中。已有账号后会直接启动，不再提示或覆盖密码。需要自定义初始用户名时，启动前设置环境变量 `CODELIB_ADMIN_USERNAME`。
+
 ### 再加一个库
 
-在 `config/config.yaml` 的 `workspaces:` 下追加一项（`id/name/path` 唯一），然后：
+管理员登录工作台，打开「账号/知识库管理」，填写知识库名称和工程目录即可创建并建索引；再给普通账号分配该库的访问权限。也可以使用管理员 API 创建。新建库信息保存在 SQLite，不必改配置文件。
+
+启动时配置文件里的 `workspaces:` 仍可定义只读的初始知识库；这些库默认仅管理员可见，普通账号需要管理员授权。
+
+命令行建库仍可用于配置文件里已定义的库：
 
 ```bash
 python -m app kb-build --workspace <新id>
@@ -64,26 +71,39 @@ python -m app kb-build --workspace <新id>
 | 方法 | 路径 | 用途 |
 |------|------|------|
 | GET | `/` | Web 工作台 |
-| GET | `/healthz` | 健康检查（含只读/库列表） |
-| GET | `/api/workspaces` | 库列表 + 是否已建库 + 统计 |
-| GET | `/api/knowledge/status` | 各库知识库统计 |
+| GET | `/healthz` | 健康检查（只读状态与知识库数量） |
+| POST | `/api/auth/login` | 用户名/密码登录，建立 HttpOnly 会话 |
+| POST | `/api/auth/logout` | 注销当前会话 |
+| GET | `/api/auth/me` | 当前登录账号 |
+| GET | `/api/workspaces` | 当前账号可访问的库列表 |
+| GET | `/api/admin/workspaces` | 管理员查看全部知识库 |
+| POST | `/api/admin/workspaces` | 管理员创建并索引知识库 `{name,id?,path,description?}` |
+| GET/POST | `/api/admin/users` | 管理员查看/创建账号 |
+| PUT | `/api/admin/users/{id}/workspaces` | 管理员设置普通账号可访问的知识库 |
+| PUT | `/api/admin/users/{id}/password` | 管理员重置账号密码并注销旧会话 |
+| PATCH | `/api/admin/users/{id}/active` | 管理员启用/停用账号 |
+| GET | `/api/knowledge/status` | 管理员查看各库知识库统计 |
 | POST | `/api/conversations` | 新建对话 `{workspace}` |
 | GET | `/api/conversations` | 历史对话列表 |
 | GET | `/api/conversations/{id}` | 某对话全部消息 |
 | POST | `/api/conversations/{id}/messages` | 在该对话提问 `{content}` |
 | DELETE | `/api/conversations/{id}` | 删除对话 |
-| POST | `/ask` | 单次问答（无会话，供程序/渠道调用） |
+| POST | `/ask` | 登录后单次问答（供程序调用） |
 | GET/POST | `/channels/wecom/callback` | 企业微信 |
 | POST | `/channels/feishu/event` | 飞书 |
 
-### 怎么用（3 步）
+### 怎么用
 
-1. 在 `config/config.yaml` 配好一个目录 `workspace.path` 和一个 `llm`；
-2. `python -m app --config config/config.yaml serve --port 8000`；
-3. 调 `POST /ask`，或直接在微信 / 飞书里给机器人发消息。
+1. 在 `config/config.yaml` 配好 `llm`；Windows 首次启动可运行 `start.bat`，其他环境则设置 `CODELIB_ADMIN_USERNAME` 和强密码 `CODELIB_ADMIN_PASSWORD`；
+2. 用 bootstrap 账号登录工作台；
+3. 管理员创建知识库、创建普通账号并分配知识库，普通账号登录后只能问答已授权库。
 
 ```bash
-curl -s http://127.0.0.1:8000/ask \
+curl -s -c cookies.txt http://127.0.0.1:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"admin\",\"password\":\"你的管理员密码\"}"
+
+curl -s -b cookies.txt http://127.0.0.1:8000/ask \
   -H "Content-Type: application/json" \
   -d "{\"question\":\"这个工程是做什么的？\"}"
 ```
@@ -101,8 +121,7 @@ curl -s http://127.0.0.1:8000/ask \
 - 想看引用评分、记忆命中、token 用量等诊断信息，请求体加 `"debug": true`，诊断信息在 `debug` 字段里。
 - 微信 / 飞书里直接用自然语言发消息即可，不用关心这些字段。
 
-> 索引重建、变更查看、写记忆等管理动作，通过**对话命令**完成（见第 6 节）。
-> 如设置了 `app.admin_token`，`POST /ask` 需带请求头 `X-Admin-Token`。
+> 程序调用可复用登录 cookie，或通过 `Authorization: Bearer <session-token>` 传递 API 会话。密码只保存 PBKDF2 哈希；初始管理员只在数据库首次创建时从环境变量引导。普通账号只能看到和提问管理员已分配的知识库，并且只能查看自己的对话；停用或重置密码会立即注销该账号现有会话。
 
 ### 代码知识库（P0，已内置）
 
@@ -121,7 +140,7 @@ python -m app kb-build --workspace gateway --full # 全量重建
 python -m app kb-stats                            # 看统计
 ```
 
-建库后 `bot` 会**自动优先使用知识库**（库为空时自动回退旧检索），无需改配置。默认每问只多一次 LLM（最终作答）；重排默认关闭。
+建库后 `bot` 会**自动优先使用知识库**（库为空时自动回退旧检索），无需改配置。默认启用 LLM 重排；分析类问题还会做一次回答覆盖检查，发现缺口时补检索并修订，因此会增加模型调用和响应时间。
 
 > 当前网关没有 `/v1/embeddings`，所以暂用“词法检索 + 同义词”；一旦你拿到任意 OpenAI 兼容 embedding API，在 `knowledge.embedding.mode: api` 打开即可升级混合检索（胶水已预留）。
 
@@ -137,8 +156,10 @@ python -m app kb-stats                            # 看统计
 | `intent` | 多轮理解/改写结果、历史轮数、改写方式（llm/heuristic） |
 | `index` | 索引/变更检测情况 |
 | `retrieve` | 检索来源、候选与选中片段（path:line）、上下文 token、预算 |
+| `evidence` | 中英文主题匹配的命中词、缺失词及作为范围忽略的工程名 |
 | `prompt` | **实际发给大模型的协议内容**（system + user 全文、各自 token 数） |
 | `llm` | 模型原始输出、finish_reason、usage（prompt/completion tokens）、耗时 |
+| `quality_review` | 分析类问题的覆盖检查结果；有明确缺口时标记是否已修订 |
 | `answer` | 最终答案 + 引用来源 |
 
 **过程评估**（对任意一次留痕，一键评估）：判断请求与回答是否合理，并给出 harness 改进建议。
@@ -182,13 +203,13 @@ python -m app kb-stats                            # 看统计
 
 调权重只能改排序；下面三项解决“候选本身不足 / 答案本身不可靠”：
 
-1. **证据门槛（不硬答）**：召回片段与问题的实体覆盖度低于阈值（默认 `0.2`）时，**不调用模型**，
+1. **证据门槛（不硬答）**：同时检查中文主题和代码标识符，工程名只作为检索范围；用户明确指定的函数名仍需命中。词面覆盖低于阈值（默认 `0.2`）时，**不调用模型**，
    直接如实说明“现有知识库中没有能直接回答的内容”，并给出相近文件与下一步建议。
    避免用“词像但无关”的片段编出一个看似合理的答案。
 2. **同问题缓存（省成本）**：历史问过且**答案有效**的问题，直接复用上次答案，不再调模型；
    **负结果（没找到/证据不足/降级）不缓存**，不会被错误固化。
-3. **评估不误判**：评估新增「证据覆盖问题」「回答有据可依」两项；只要有一项不达标，分数上限压到 55、
-   等级降为 fair，并明确给出 `weight_only_insufficient=true` —— 告诉你“这次不是排序问题，是缺内容”。
+3. **评估区分缺证据和误拦**：门槛与评估共享匹配算法，旧 trace 重评会检查是否已有相关片段却仍被拒答；拒答模板不计入事实性回答的标识符忠实度。覆盖不足或误拦时分数上限为 55，误拦标记为 poor。词面命中仅用于排除明显无关内容，不表示证据完整。
+4. **控制反馈学习**：门槛、提示词和扩库建议不会自动生成加权；不从评审理由中学习权重，不重复推荐已召回文件，也不因推荐某个文件就为其父目录加权。
 
 > 配置：`knowledge.retrieve.min_coverage`（默认 0.2，越大越保守）。
 
@@ -203,12 +224,15 @@ app:
   host: 0.0.0.0
   port: 8000
   data_dir: ./data
-  admin_token: ""                # 可选；设置后 /ask 需带 X-Admin-Token
 
-workspace:                       # ← 只配一个代码目录（只读）
+auth:
+  bootstrap_admin:
+    username: ${CODELIB_ADMIN_USERNAME:-}
+    password: ${CODELIB_ADMIN_PASSWORD:-}
+
+workspace:                       # ← 可选的初始知识库（只读）；后续可由管理员添加更多库
   path: ./sample_workspace       #   改成你的目录，如 D:/tdx/zq/tx_msg_svr
   name: 我的工程
-  token_budget: 3000             # 每次问答注入上下文的最大 token
   auto_reindex_on_query: true    # 提问时自动感知变更并增量重建
   watch_interval_seconds: 0      # >0 则后台定时巡检（秒）
 
@@ -223,6 +247,15 @@ llm:                             # ← 只配一个大模型；留空 api_key �
 
 memory:
   enabled: true
+
+knowledge:
+  retrieve:
+    top_k: 40                    # 全局候选数
+    budget_tokens: 4000          # 全工作区共用的上下文预算
+  rerank:
+    mode: llm
+    top_n: 10
+  answer_review: true            # 分析类问题检查覆盖度，必要时修订
 
 channels:
   wecom:  { enabled: false, corp_id: "", agent_id: "", secret: "", token: "", encoding_aes_key: "", webhook_url: "" }
@@ -301,8 +334,8 @@ CLI 也提供同等能力：`index / ask / changes / status / remember / llm`（
 ## 7. 省 token 的机制（含实测）
 
 1. **索引不存全文**：只抽函数/类签名、文档字符串、Markdown 标题、关键注释，记录 `file:line` 指回源文件。
-2. **按预算检索**：BM25 + 中英同义词排序，只把最相关的少量片段注入上下文；`token_budget` 控制上限；仅对前几条回源读精确行。
-3. **记忆复用**：相似问题命中历史问答，减少重复检索。
+2. **按预算检索**：BM25 + 中英同义词排序，只把最相关的少量片段注入上下文；统一由 `knowledge.retrieve.budget_tokens` 控制上限，不再按工作区分别设置；仅对前几条回源读精确行。
+3. **答案复用**：仅对足够完整、带来源且当前检索仍命中原来源的简单问题复用答案；复杂问题和降级摘要会重新回答。
 4. **增量索引**：只处理变更文件（`mtime+size` 快速跳过）。
 
 真实工程 `D:\tdx\zq\tx_msg_svr`（240 个 Go 文件）实测：
@@ -361,6 +394,7 @@ python tests/smoke_test.py     # 索引→问答→记忆→变更→增量
 python tests/api_test.py       # 单次问答 + 企业微信/飞书回调
 python tests/web_test.py       # 网页会话：新建/连续提问/历史/删除
 python tests/workbench_test.py # 工作台：多库隔离 + 只读守卫（写路径 403）
+python tests/auth_test.py      # 账号角色、知识库授权、会话隔离、旧数据库迁移
 python tests/trace_eval_test.py # 全链路留痕 + 规则/模型评估（假 LLM）
 python tests/feedback_test.py  # 评估闭环：结论→boost 规则→检索加权命中
 python tests/gate_test.py      # 证据门槛 / 同问题缓存 / 评估分流（不硬答、不固化负结果）
@@ -373,6 +407,6 @@ python tests/llm_live_test.py  # 本地假大模型端到端 + 失败降级
 ## 12. 安全 / 限制
 
 - 索引只读目标目录，不改源码；默认排除 `.git/node_modules/dist/target/logs` 与二进制大文件；
-- 密钥用环境变量；`admin_token` 保护 `/ask`；企业微信/飞书均做签名与可选解密；
+- 管理员通过环境变量引导创建；密码以 PBKDF2 哈希保存，普通账号按知识库授权；企业微信/飞书均做签名与可选解密；
 - 检索为词法为主（内置中英同义词），跨语言概念检索可后续替换为向量检索；
 - 单机 SQLite，适合单实例/中小团队；企业微信/飞书需公网回调地址。

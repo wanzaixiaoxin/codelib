@@ -44,8 +44,7 @@ DEFAULT_EXCLUDE_GLOBS = [
 
 _INDEX_KEYS = ("include", "exclude_dirs", "exclude_globs", "max_file_bytes",
                "snippet_lines", "max_signatures_per_file", "max_chunks_per_file",
-               "token_budget", "auto_reindex_on_query", "watch_interval_seconds",
-               "deep_read_top_k")
+               "auto_reindex_on_query", "watch_interval_seconds", "deep_read_top_k")
 
 
 def _expand_env(value: Any) -> Any:
@@ -79,7 +78,6 @@ class IndexConfig:
     snippet_lines: int = 12
     max_signatures_per_file: int = 80
     max_chunks_per_file: int = 120
-    token_budget: int = 3000
     auto_reindex_on_query: bool = True
     watch_interval_seconds: int = 0
     deep_read_top_k: int = 2
@@ -95,7 +93,6 @@ class IndexConfig:
             snippet_lines=int(d.get("snippet_lines", 12)),
             max_signatures_per_file=int(d.get("max_signatures_per_file", 80)),
             max_chunks_per_file=int(d.get("max_chunks_per_file", 120)),
-            token_budget=int(d.get("token_budget", 3000)),
             auto_reindex_on_query=bool(d.get("auto_reindex_on_query", True)),
             watch_interval_seconds=int(d.get("watch_interval_seconds", 0)),
             deep_read_top_k=int(d.get("deep_read_top_k", 2)),
@@ -120,7 +117,7 @@ class WorkspaceConfig:
             p = (base_dir / p).resolve()
         # id 可选：缺省用目录名，便于客户端直接用目录名作为 workspace
         wid = str(d.get("id") or p.name or "default").strip() or "default"
-        # 允许把 token_budget 等直接平铺在 workspace 下（更简洁）
+        # 允许把索引选项直接平铺在 workspace 下（更简洁）；上下文预算统一归 knowledge.retrieve 管理。
         idx_raw = d.get("index")
         if idx_raw is None:
             idx_raw = {k: d[k] for k in _INDEX_KEYS if k in d}
@@ -201,7 +198,6 @@ class AppConfig:
     port: int = 8000
     log_level: str = "INFO"
     data_dir: str = "data"
-    admin_token: str = ""
     read_only: bool = True          # 强制只读：不提供任何写工程文件的接口
     default_workspace: str = ""
     workspaces: List[WorkspaceConfig] = field(default_factory=list)
@@ -209,6 +205,7 @@ class AppConfig:
     channels: Dict[str, Any] = field(default_factory=dict)
     memory: Dict[str, Any] = field(default_factory=dict)
     knowledge: Dict[str, Any] = field(default_factory=dict)
+    auth: Dict[str, Any] = field(default_factory=dict)
     config_path: str = ""
 
     @property
@@ -288,7 +285,6 @@ class AppConfig:
             port=int(app.get("port", 8000)),
             log_level=str(app.get("log_level", "INFO")),
             data_dir=str(data_dir),
-            admin_token=str(app.get("admin_token", "") or ""),
             read_only=bool(app.get("read_only", True)),
             default_workspace=str(data.get("default_workspace") or
                                   (ws_list[0].id if ws_list else "")),
@@ -297,5 +293,6 @@ class AppConfig:
             channels=data.get("channels") or {},
             memory=data.get("memory") or {},
             knowledge=data.get("knowledge") or {},
+            auth=data.get("auth") or {},
             config_path=str(cfg_file),
         )

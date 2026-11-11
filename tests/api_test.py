@@ -22,6 +22,7 @@ _tmp = Path(tempfile.mkdtemp(prefix="codelib_api_"))
 _cfg = _tmp / "config.yaml"
 _cfg.write_text(yaml.safe_dump({
     "app": {"host": "127.0.0.1", "port": 8000, "data_dir": str(_tmp / "data")},
+    "auth": {"bootstrap_admin": {"username": "admin", "password": "test-admin-pass"}},
     "workspace": {"id": "sample", "name": "sample", "path": str(ROOT / "sample_workspace")},
     "llm": {"type": "openai_compatible", "base_url": "", "api_key": "", "model": ""},
     "memory": {"enabled": True},
@@ -49,6 +50,9 @@ def main() -> int:
         r = client.get("/healthz")
         print(r.status_code, r.json())
         assert r.status_code == 200 and r.json()["ok"]
+
+        r = client.post("/api/auth/login", json={"username": "admin", "password": "test-admin-pass"})
+        assert r.status_code == 200, r.text
 
         print("\n== /ask ==")
         r = client.post("/ask", json={"question": "消息网关如何路由消息？"})

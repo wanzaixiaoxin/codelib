@@ -21,31 +21,35 @@ _IDENT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_.]{2,})`")
 _MISSING_HINTS = ("缺少", "未包含", "未纳入", "应召回", "建议召回", "建议补充", "可补充",
                   "未被检索", "未被召回", "未出现在检索", "缺失", "补充召回", "应纳入",
                   "没有召回", "截断")
+_NO_BOOST_HINTS = ("调权重无效", "无关", "不应", "无需", "已召回", "已命中", "已经召回",
+                   "门槛", "误拦", "分词", "提示词", "约束")
 
 
 def extract_boost_candidates(report: Dict[str, Any]) -> List[Dict[str, str]]:
     """从评估报告提取 boost 候选：{kind, pattern, why}。去重保序。"""
     texts: List[str] = []
-    rule = report.get("rule") or {}
-    for c in rule.get("checks", []) or []:
-        if not c.get("ok"):
-            texts.append(str(c.get("detail", "")))
-            if c.get("hint"):
-                texts.append(str(c["hint"]))
-    llm = report.get("llm") or {}
-    for x in llm.get("harness_improvements", []) or []:
-        texts.append(str(x))
-    for x in llm.get("reasons", []) or []:
-        texts.append(str(x))
-    for x in report.get("improvements", []) or []:
-        texts.append(str(x))
+    if "improvement_actions" in report:
+        # 结构化分流优先：门槛修复和扩库建议不能再从原文里被反向抽成加权。
+        texts = [str(action.get("improvement", ""))
+                 for action in report["improvement_actions"] if action.get("kind") == "boost"]
+    else:
+        for check in (report.get("rule") or {}).get("checks", []) or []:
+            if not check.get("ok") and check.get("hint"):
+                texts.append(str(check["hint"]))
+        texts.extend(str(x) for x in (report.get("llm") or {}).get("harness_improvements", []) or [])
+        texts.extend(str(x) for x in report.get("improvements", []) or [])
 
     out: List[Dict[str, str]] = []
     seen = set()
+    retrieved_paths = {str(path).replace("\\", "/").lower() for path in report.get("retrieved_paths", [])}
 
     def push(kind: str, pattern: str, why: str) -> None:
         pattern = pattern.strip().strip("`'\"")
         if not pattern or len(pattern) < 3:
+            return
+        if kind == "path" and pattern.lower() in retrieved_paths:
+            return
+        if kind == "dir" and any(path.startswith(pattern.lower()) for path in retrieved_paths):
             return
         k = (kind, pattern.lower())
         if k in seen:
@@ -53,15 +57,18 @@ def extract_boost_candidates(report: Dict[str, Any]) -> List[Dict[str, str]]:
         seen.add(k)
         out.append({"kind": kind, "pattern": pattern, "why": why[:200]})
 
-    for t in texts:
-        if not any(h in t for h in _MISSING_HINTS):
+    sentences = [part.strip() for text in texts for part in re.split(r"[。！？；;\n]+", text) if part.strip()]
+    for t in sentences:
+        if any(h in t for h in _NO_BOOST_HINTS) or not any(h in t for h in _MISSING_HINTS):
             continue
         # 文件
-        for m in _FILE_RE.findall(t):
+        files = _FILE_RE.findall(t)
+        for m in files:
             push("path", m.replace("\\", "/"), t)
-        # 目录
-        for m in _DIR_RE.findall(t):
-            push("dir", m, t)
+        # 只在明确推荐目录时加目录权重，避免一个文件名污染整个父目录。
+        if not files:
+            for m in _DIR_RE.findall(t):
+                push("dir", m, t)
         # 反引号标识符（多为函数/符号名）
         for m in _IDENT_RE.findall(t):
             if "." in m and _FILE_RE.match(m):

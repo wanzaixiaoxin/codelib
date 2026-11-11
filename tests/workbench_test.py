@@ -38,6 +38,7 @@ lib_b = _mk_lib("beta")
 _cfg = _tmp / "config.yaml"
 _cfg.write_text(yaml.safe_dump({
     "app": {"host": "127.0.0.1", "port": 8000, "data_dir": str(_tmp / "data"), "read_only": True},
+    "auth": {"bootstrap_admin": {"username": "admin", "password": "test-admin-pass"}},
     "default_workspace": "alpha",
     "workspaces": [
         {"id": "alpha", "name": "Alpha 库", "path": str(lib_a)},
@@ -64,6 +65,8 @@ def main() -> int:
         print("build", ws.id, "chunks", r["totals"]["chunks"])
 
     with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "admin", "password": "test-admin-pass"})
+        assert login.status_code == 200, login.text
         print("\n== GET / ==")
         r = client.get("/")
         assert r.status_code == 200 and "只读" in r.text and "知识库" in r.text

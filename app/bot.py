@@ -1,12 +1,15 @@
 """问答编排：命令路由 + 增量索引 + 检索 + 记忆 + LLM/降级回答。"""
 from __future__ import annotations
 
+import json
 import re
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import indexer, retrieval
 from .config import AppConfig, WorkspaceConfig
+from .evidence import evidence_coverage
 from .llm import LLMClient
 from .memory import MemoryManager
 from .models import Answer, Citation
@@ -16,8 +19,8 @@ from .utils import clip, estimate_tokens
 
 SYSTEM_PROMPT = (
     "你是一名资深软件工程师，负责向同事讲清楚这个工程。"
-    "你只能依据提供的候选片段与历史记忆作答，不得编造不存在的文件、函数或行为。"
-    "候选中若已明确给出某个文件/符号/配置项，就直接依据它作答；没有给出时，不要用记忆中隐约记得的内容填充。"
+    "关于当前工程的事实必须由提供的候选片段支持，不得编造不存在的文件、函数或行为。"
+    "历史对话与记忆只用于消解指代或理解用户偏好，不能代替当前代码证据；候选没有覆盖的部分要明确说明。"
     "候选片段里可能混有只是关键词相近、实际无关的内容：你要先剔除无关项，"
     "再把真正相关的内容综合成一段连贯、完整、有逻辑的回答，而不是罗列片段或复制代码。"
     "只允许引用候选里真实出现的文件与行号；无法确认时明确说“候选未覆盖”，不要猜测。"
@@ -114,7 +117,9 @@ class BotService:
         if tracer:
             tracer.index_info(index_result)
 
-        budget = max(ws.index.token_budget, 3500) * (2 if deep else 1)
+        retrieve_cfg = (self.cfg.knowledge or {}).get("retrieve", {}) or {}
+        budget = max(1, int(retrieve_cfg.get("budget_tokens", 4000))) * (2 if deep else 1)
+        top_k = max(1, int(retrieve_cfg.get("top_k", 40))) * (2 if deep else 1)
         deep_k = max(ws.index.deep_read_top_k, 3) * (2 if deep else 1)
         use_kb = False
         if self.kb is not None:
@@ -127,13 +132,13 @@ class BotService:
             from .knowledge import query as kb_query
             context, citations, used = await kb_query.build_context(
                 self.kb, self.cfg, ws, retrieval_query,
-                budget_tokens=budget, top_k=24 if deep else 16,
-                deep_top_k=deep_k, llm=self.llm,
+                budget_tokens=budget, top_k=top_k,
+                deep_top_k=deep_k, llm=self.llm, deep=deep,
             )
         else:
             context, citations, used = retrieval.build_context(
                 self.store, ws.id, ws.path, retrieval_query,
-                budget_tokens=budget, top_k=24 if deep else 16, deep_top_k=deep_k,
+                budget_tokens=budget, top_k=top_k, deep_top_k=deep_k,
             )
         if tracer:
             tracer.retrieval_info("knowledge" if use_kb else "legacy",
@@ -143,8 +148,44 @@ class BotService:
         if self.memory_enabled:
             mem_block, mem_hits = self.memory.relevant(ws.id, text)
 
-        # 同一问题答过 → 直接复用历史答案（省一次模型调用；带上原来源）
-        mem_answer = self._find_same_question_answer(ws.id, text)
+        if not context:
+            answer_text = ("没有在当前工作区索引中找到相关内容。可以尝试 /index 重建索引，"
+                           "或用更具体的关键词（类名、函数名、模块名）提问。")
+            self._record(ws, session_id, text, answer_text, [], cacheable=False)
+            if tracer:
+                tracer.answer(answer_text, [], False, tracer.elapsed_ms())
+            return Answer(text=answer_text, workspace=ws.id, trace_id=tracer.trace_id if tracer else "",
+                          changes=(index_result or {}),
+                          full_corpus_tokens=self.store.sum_full_tokens(ws.id),
+                          elapsed_ms=int((time.time() - t0) * 1000))
+
+        # 证据门槛：候选与问题关键实体几乎不重合时，宁可不硬答（避免靠"词像"或幻觉作答）
+        evidence = evidence_coverage(
+            effective_question, context, citations, original_question=text,
+            scope_terms=(ws.id, ws.name, Path(ws.path).name))
+        coverage = evidence["coverage"]
+        min_cov = float((self.cfg.knowledge or {}).get("retrieve", {}).get("min_coverage",
+                         self.cfg.knowledge.get("min_coverage", 0.2) if isinstance(self.cfg.knowledge, dict) else 0.2))
+        if tracer:
+            tracer.event("evidence", {**evidence, "min_coverage": min_cov})
+        # 记忆不能绕过门槛；短问题也检查，工程名不作为业务证据。
+        if coverage < min_cov:
+            hint = self._insufficient_answer(effective_question, coverage, citations)
+            self._record(ws, session_id, text, hint, [], cacheable=False)
+            if tracer:
+                tracer.event("gate", {"coverage": round(coverage, 3), "min_coverage": min_cov,
+                                      "action": "insufficient_evidence"})
+                tracer.answer(hint, citations[:3], False, tracer.elapsed_ms())
+            return Answer(text=hint, workspace=ws.id, trace_id=tracer.trace_id if tracer else "",
+                          citations=citations[:3], changes=(index_result or {}),
+                          used_context_tokens=used,
+                          full_corpus_tokens=self.store.sum_full_tokens(ws.id),
+                          elapsed_ms=int((time.time() - t0) * 1000))
+
+        # 只在当前检索通过证据门槛后复用缓存；分析问题、索引变化或证据来源变化都重新生成。
+        mem_answer = None
+        if not index_result and not self._is_analytical_question(effective_question):
+            mem_answer = self._find_same_question_answer(ws.id, text, citations)
         if mem_answer:
             from .models import Citation as _Cit
             old_cites: List[Citation] = []
@@ -170,36 +211,6 @@ class BotService:
                           full_corpus_tokens=self.store.sum_full_tokens(ws.id),
                           elapsed_ms=int((time.time() - t0) * 1000))
 
-        if not context and not mem_block:
-            answer_text = ("没有在当前工作区索引中找到相关内容。可以尝试 /index 重建索引，"
-                           "或用更具体的关键词（类名、函数名、模块名）提问。")
-            self._record(ws, session_id, text, answer_text, [], cacheable=False)
-            if tracer:
-                tracer.answer(answer_text, [], False, tracer.elapsed_ms())
-            return Answer(text=answer_text, workspace=ws.id, trace_id=tracer.trace_id if tracer else "",
-                          changes=(index_result or {}),
-                          full_corpus_tokens=self.store.sum_full_tokens(ws.id),
-                          elapsed_ms=int((time.time() - t0) * 1000))
-
-        # 证据门槛：候选与问题关键实体几乎不重合时，宁可不硬答（避免靠"词像"或幻觉作答）
-        # 有历史记忆命中（同类问题答过）时放行，避免把“已答过的问题”误拦。
-        coverage = self._evidence_coverage(effective_question, context, citations)
-        min_cov = float((self.cfg.knowledge or {}).get("retrieve", {}).get("min_coverage",
-                         self.cfg.knowledge.get("min_coverage", 0.2) if isinstance(self.cfg.knowledge, dict) else 0.2))
-        # 证据门槛：候选与问题实体几乎不重合 → 不硬答（记忆不能用来绕过，避免把幻觉当答案）
-        if context and coverage < min_cov and len(effective_question) >= 6:
-            hint = self._insufficient_answer(effective_question, coverage, citations)
-            self._record(ws, session_id, text, hint, [], cacheable=False)
-            if tracer:
-                tracer.event("gate", {"coverage": round(coverage, 3), "min_coverage": min_cov,
-                                      "action": "insufficient_evidence"})
-                tracer.answer(hint, citations[:3], False, tracer.elapsed_ms())
-            return Answer(text=hint, workspace=ws.id, trace_id=tracer.trace_id if tracer else "",
-                          citations=citations[:3], changes=(index_result or {}),
-                          used_context_tokens=used,
-                          full_corpus_tokens=self.store.sum_full_tokens(ws.id),
-                          elapsed_ms=int((time.time() - t0) * 1000))
-
         if self.llm.available:
             user_prompt = self._build_prompt(ws, effective_question, context, mem_block, history)
             if tracer:
@@ -209,11 +220,26 @@ class BotService:
             _llm_ms = int((time.time() - _llm_t0) * 1000)
             if llm_out and not llm_out.startswith("__LLM_ERROR__"):
                 answer_text = llm_out
+                answer_finish = self.llm.last_raw_finish
+                answer_usage = dict(self.llm.last_raw_usage or {})
+                review_report = None
+                if self._is_analytical_question(effective_question) and bool(
+                        (self.cfg.knowledge or {}).get("answer_review", True)):
+                    review_t0 = time.time()
+                    answer_text, review_report, more_citations, more_used = await self._review_and_revise(
+                        ws, effective_question, retrieval_query, context, citations,
+                        mem_block, history, answer_text, use_kb,
+                        max(0, budget - used), top_k, deep_k, deep)
+                    used += more_used
+                    citations.extend(more_citations)
+                    _llm_ms += int((time.time() - review_t0) * 1000)
                 llm_used = True
                 llm_provider = self.llm.name
                 if tracer:
-                    tracer.llm_result(True, llm_out, self.llm.last_raw_finish,
-                                      self.llm.last_raw_usage, _llm_ms)
+                    tracer.llm_result(True, llm_out, answer_finish,
+                                      answer_usage, _llm_ms)
+                    if review_report is not None:
+                        tracer.event("quality_review", review_report)
             else:
                 answer_text = self._extractive_answer(text, context, citations)
                 if llm_out and llm_out.startswith("__LLM_ERROR__"):
@@ -234,8 +260,11 @@ class BotService:
         if llm_used:
             citations = self._filter_used_citations(answer_text, citations)
 
+        cited_in_answer = any(c.path and c.path in answer_text for c in citations)
         self._record(ws, session_id, text, answer_text,
-                     [c.to_dict() for c in citations])
+                     [c.to_dict() for c in citations],
+                     cacheable=(llm_used and len(answer_text) >= 120
+                                and bool(citations) and cited_in_answer))
         if tracer:
             tracer.answer(answer_text, citations, llm_used, tracer.elapsed_ms())
 
@@ -254,8 +283,10 @@ class BotService:
         )
 
     # ---------------- 证据门槛 ----------------
-    def _find_same_question_answer(self, workspace_id: str, question: str) -> Optional[Dict[str, Any]]:
-        """若历史里问过“同一个问题”（规范化后完全一致），直接复用那次答案。"""
+    def _find_same_question_answer(self, workspace_id: str, question: str,
+                                   current_citations: List[Citation]
+                                   ) -> Optional[Dict[str, Any]]:
+        """仅复用有实质内容、且来源仍命中当前检索结果的旧答案。"""
         import re as _re
         norm = lambda s: _re.sub(r"[\s，。？！,.?!、：:；;]", "", (s or "").lower())
         q = norm(question)
@@ -269,11 +300,32 @@ class BotService:
             if norm(qa.get("question", "")) != q:
                 continue
             ans = (qa.get("answer") or "").strip()
-            if not ans:
+            if len(ans) < 120:
                 continue
             # 只复用“正经答案”：不复用“没找到/证据不足/降级摘要”这类负结果，避免错误固化
             if any(x in ans for x in ("没有找到", "现有知识库中没有", "未找到",
-                                      "已降级为检索摘要", "没有在当前工作区索引中")):
+                                      "已降级为检索摘要", "没有在当前工作区索引中",
+                                      "未配置大模型", "以上为检索摘要")):
+                continue
+            old = qa.get("citations") or []
+            if not old or not current_citations or not any(
+                    str(c.get("path", "")) in ans for c in old if isinstance(c, dict)):
+                continue
+            still_supported = False
+            for c in old:
+                if not isinstance(c, dict):
+                    continue
+                try:
+                    start = int(c.get("start_line", 1))
+                    end = int(c.get("end_line", 1))
+                except (TypeError, ValueError):
+                    continue
+                if any(str(c.get("path", "")) == current.path
+                       and max(start, current.start_line) <= min(end, current.end_line)
+                       for current in current_citations):
+                    still_supported = True
+                    break
+            if not still_supported:
                 continue
             return {"answer": ans, "question": qa.get("question", ""),
                     "citations": qa.get("citations") or []}
@@ -291,52 +343,99 @@ class BotService:
             if q in body or body.find(q) >= 0:
                 return True
         return False
-    # 中文虚词/助词，用于把问题切成实词片段
-    _ZH_SPLIT = re.compile(
-        r"的|了|吗|呢|吧|啊|是|在|把|被|和|与|及|或|对|从|向|为|这|那|个|请|问|如|何|怎|样|什|么|哪|些|能|可|要|会|就|都|也|还|又|很|再|所|以|而|但|并|等|中|上|下|里|后|前|先|如何|怎么|怎样|什么|为什么|哪些|请问")
-    _ZH_STOP = {"函数", "方法", "参数", "时候", "问题", "一下", "东西", "情况", "超频"}
+    @staticmethod
+    def _is_analytical_question(question: str) -> bool:
+        markers = ("分析", "为什么", "原因", "根因", "原理", "机制", "流程", "链路",
+                   "架构", "设计", "对比", "差异", "影响", "排查", "优化", "如何实现", "怎么实现")
+        return any(marker in (question or "") for marker in markers)
 
-    def _evidence_coverage(self, question: str, context: str, citations: List[Citation]) -> float:
-        """问题“有区分度的实体”在候选里出现的比例。0~1。
+    async def _review_and_revise(self, ws: WorkspaceConfig, question: str,
+                                 retrieval_query: str, context: str,
+                                 current_citations: List[Citation], mem_block: str,
+                                 history: Optional[List[Dict[str, Any]]], draft: str,
+                                 use_kb: bool, remaining_budget: int, top_k: int,
+                                 deep_top_k: int, deep: bool
+                                 ) -> tuple[str, Dict[str, Any], List[Citation], int]:
+        """分析类问题：核对覆盖度，按遗漏项补检索，再用证据修订。"""
+        review_system = (
+            "你是代码问答质量检查器。只判断回答是否切题、是否覆盖问题要求、是否有结论缺少候选证据。"
+            '只输出 JSON：{"relevant":true,"complete":true,"missing":[],"unsupported":[]}。'
+            "missing 只写用户明确要求但回答遗漏的要点；unsupported 只写无法由给定片段支持的关键断言。"
+        )
+        review_user = (
+            f"问题：{question}\n\n当前代码证据：\n{context[:16000]}\n\n"
+            f"草稿：\n{draft[:6000]}\n\n请检查相关性、覆盖度和证据支持。"
+        )
+        raw = await self.llm.chat(review_system, review_user)
+        report: Dict[str, Any] = {"checked": False, "revised": False}
+        if not raw or str(raw).startswith("__LLM_ERROR__"):
+            return draft, report, [], 0
+        try:
+            match = re.search(r"\{.*\}", str(raw), re.S)
+            review = json.loads(match.group(0) if match else str(raw))
+            if not isinstance(review, dict):
+                return draft, report, [], 0
+        except (ValueError, TypeError):
+            return draft, report, [], 0
 
-        - 英文标识符逐个精确匹配（强实体）；
-        - 中文按虚词切成分片后，对每个分片做“多粒度”匹配（整词 / 其 2~3 字核心子词），
-          只要某一粒度在候选里出现即算命中，避免因说法略变就整词不中。
-        """
-        import re as _re
-        q = (question or "").strip()
-        ascii_terms = [t for t in _re.findall(r"[A-Za-z_][A-Za-z0-9_.]{2,}", q)]
+        missing = [str(x) for x in (review.get("missing") or []) if str(x).strip()]
+        unsupported = [str(x) for x in (review.get("unsupported") or []) if str(x).strip()]
+        report = {"checked": True, "revised": False,
+                  "relevant": bool(review.get("relevant", True)),
+                  "complete": bool(review.get("complete", True)),
+                  "missing": missing[:5], "unsupported": unsupported[:5]}
+        needs_revision = (not report["relevant"] or not report["complete"]
+                          or bool(missing) or bool(unsupported))
+        if not needs_revision:
+            return draft, report, [], 0
 
-        zh_units: List[str] = []
-        for seg in _re.findall(r"[\u4e00-\u9fff]+", q):
-            for part in self._ZH_SPLIT.split(seg):
-                part = part.strip()
-                if len(part) >= 2 and part not in self._ZH_STOP and part not in zh_units:
-                    zh_units.append(part)
+        added_context = ""
+        added_citations: List[Citation] = []
+        added_tokens = 0
+        if (missing or unsupported) and remaining_budget > 0:
+            targeted_query = " ".join([retrieval_query, *missing, *unsupported]).strip()
+            try:
+                if use_kb and self.kb is not None:
+                    from .knowledge import query as kb_query
+                    added_context, added_citations, added_tokens = await kb_query.build_context(
+                        self.kb, self.cfg, ws, targeted_query,
+                        budget_tokens=remaining_budget, top_k=top_k,
+                        deep_top_k=deep_top_k, llm=self.llm, deep=deep)
+                else:
+                    added_context, added_citations, added_tokens = retrieval.build_context(
+                        self.store, ws.id, ws.path, targeted_query,
+                        budget_tokens=remaining_budget, top_k=top_k,
+                        deep_top_k=deep_top_k)
+            except Exception:
+                added_context, added_citations, added_tokens = "", [], 0
+        if added_context:
+            have = {(c.path, c.start_line, c.end_line) for c in current_citations}
+            added_citations = [c for c in added_citations
+                               if (c.path, c.start_line, c.end_line) not in have]
+            report["supplemental_retrieval"] = bool(added_citations)
+            if added_citations:
+                context = context + "\n\n补充检索证据：\n" + added_context
+                report["supplemental_sources"] = [c.to_dict() for c in added_citations]
+                report["supplemental_tokens"] = added_tokens
+            else:
+                added_context = ""
+                added_tokens = 0
+        else:
+            report["supplemental_retrieval"] = False
 
-        hay = ((context or "") + " " + " ".join(f"{c.path} {c.symbol}" for c in citations)).lower()
-
-        def unit_hit(u: str) -> bool:
-            if u.lower() in hay:
-                return True
-            # 多粒度：整词不中时，退回其 2~3 字子词（只对中文）
-            if re.fullmatch(r"[\u4e00-\u9fff]+", u):
-                for n in (3, 2):
-                    for i in range(len(u) - n + 1):
-                        sub = u[i:i + n]
-                        if sub not in self._ZH_STOP and sub in hay:
-                            return True
-            return False
-
-        if ascii_terms:
-            terms = list(dict.fromkeys(ascii_terms))[:10]
-            hit = sum(1 for t in terms if t.lower() in hay)
-            return hit / len(terms)
-        if not zh_units:
-            return 1.0
-        terms = zh_units[:8]
-        hit = sum(1 for u in terms if unit_hit(u))
-        return hit / len(terms)
+        prompt = self._build_prompt(ws, question, context, mem_block, history)
+        prompt += (
+            "\n\n上一版回答的检查结果如下。请在现有证据范围内补齐遗漏、删除无依据断言，"
+            "重新完整回答用户问题；证据没有覆盖的部分要明确标为未知，不要猜测。\n"
+            f"遗漏：{'; '.join(missing) or '检查器未列出'}\n"
+            f"无证据断言：{'; '.join(unsupported) or '检查器未列出'}\n"
+            f"上一版回答：\n{draft[:6000]}"
+        )
+        revised = await self.llm.chat(SYSTEM_PROMPT, prompt)
+        if revised and not str(revised).startswith("__LLM_ERROR__"):
+            report["revised"] = True
+            return str(revised).strip(), report, added_citations, added_tokens
+        return draft, report, [], 0
 
     def _insufficient_answer(self, question: str, coverage: float,
                              citations: List[Citation]) -> str:
@@ -407,7 +506,7 @@ class BotService:
                       history: Optional[List[Dict[str, Any]]] = None) -> str:
         parts = [f"工程：{ws.name}（{ws.path}）"]
         if history:
-            hist_lines = ["最近对话（用于理解当前问题在指什么；如为追问请延续主题，不要照抄）："]
+            hist_lines = ["最近对话（只用于理解指代和追问关系；历史回答不是当前事实证据）："]
             for m in history[-6:]:
                 role = "用户" if m.get("role") == "user" else "助手"
                 hist_lines.append(f"{role}: {clip(m.get('content', ''), 220)}")
@@ -421,16 +520,24 @@ class BotService:
             context or "（没有检索到候选片段）",
         ]
         if mem_block:
-            parts += ["", mem_block]
+            parts += ["", "历史记忆（仅用于补充背景，不可作为当前工程行为的证据）：", mem_block]
+        parts += ["", "回答要求："]
+        if self._is_analytical_question(question):
+            parts += [
+                "这是分析类问题。先直接回答核心结论，再按问题需要说明涉及组件及职责、调用/数据流、"
+                "关键原因与因果关系、边界或失败路径；逐项回应用户明确提出的子问题。",
+                "把代码中可直接确认的事实与推断分开；每个关键事实就近引用来源（path:line-line）。",
+                "使用清晰的小标题或分点组织内容，充分解释但避免重复，不受固定字数上限限制。",
+                "若证据只覆盖部分问题，先回答有据可答的部分，再明确列出缺失证据；不得靠历史记忆或猜测补齐。",
+            ]
+        else:
+            parts += [
+                "先给直接结论，再用简洁说明交代原因或操作路径；回答应覆盖用户问题，不要只复述检索片段。",
+                "关键事实就近引用来源（path:line-line）；证据不足时说明具体缺口，不要硬凑。",
+            ]
         parts += [
-            "",
-            "输出要求：",
-            "- 先给一句话结论/定位，再用 2-4 段连贯说明（是什么、怎么工作/流程、边界或注意点），"
-            "像给同事讲解，而不是检索结果清单；",
-            "- 不要逐条罗列片段，不要写“依据1/2/3”，不要复制代码，不要出现“[片段N]”这类编号；",
-            "- 引用只在相关句子末尾用括号标注来源，最多 3 个，格式 path:line-line；",
-            "- 不要使用 Markdown 符号（**、#、反引号）；",
-            "- 总长 300-600 字；若候选不足以回答，用一句话说明还缺什么，不要硬凑。",
+            "候选片段是证据而非答案清单；不要写“依据1/2/3”，不要复制大段代码，也不要输出片段编号。",
+            "只引用候选中真实出现的文件与行号；没有证据支持的推断要明确标为推断。",
         ]
         return "\n".join(parts)
 

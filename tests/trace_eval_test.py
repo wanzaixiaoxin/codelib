@@ -23,7 +23,7 @@ JUDGE = json.dumps({
     "verdict": "good", "score": 88, "faithful": True, "relevant": True,
     "complete": False, "off_topic": False,
     "reasons": ["回答与检索片段一致"],
-    "harness_improvements": ["应召回启动脚本 startup.sh", "可提高 token_budget"],
+    "harness_improvements": ["应召回启动脚本 startup.sh", "可提高 knowledge.retrieve.budget_tokens"],
 }, ensure_ascii=False)
 
 

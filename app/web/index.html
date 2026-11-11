@@ -63,7 +63,22 @@
           justify-content:center;font-size:12px;font-weight:600}
   .msg.user .avatar{background:var(--brand);color:#fff}
   .msg.assistant .avatar{background:#e9edf5;color:var(--brand)}
-  .bubble{padding:11px 14px;border-radius:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+  .bubble{padding:11px 14px;border-radius:12px;line-height:1.7;white-space:normal;word-break:break-word}
+  .msg.user .bubble{white-space:pre-wrap}
+  .bubble p{margin:0 0 10px}.bubble p:last-child{margin-bottom:0}
+  .bubble h1,.bubble h2,.bubble h3,.bubble h4{line-height:1.4;margin:14px 0 7px}
+  .bubble h1:first-child,.bubble h2:first-child,.bubble h3:first-child,.bubble h4:first-child{margin-top:0}
+  .bubble ul,.bubble ol{margin:4px 0 10px;padding-left:24px}
+  .bubble li{padding-left:2px;margin:3px 0}
+  .bubble blockquote{margin:8px 0;padding:2px 0 2px 12px;border-left:3px solid #d5dbe5;color:#5b6472}
+  .bubble code{font-family:Consolas,"SFMono-Regular",monospace;font-size:.92em;background:#f1f3f6;border-radius:4px;padding:1px 4px}
+  .bubble pre{overflow:auto;padding:10px 12px;background:#f6f7f9;border:1px solid var(--line);border-radius:8px;white-space:pre-wrap}
+  .bubble pre code{padding:0;background:transparent}
+  .bubble table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;margin:8px 0 12px}
+  .bubble th,.bubble td{border:1px solid var(--line);padding:5px 9px;text-align:left;white-space:normal}
+  .bubble th{background:#f6f7f9}
+  .bubble a{color:var(--brand);text-decoration:underline}
+  .bubble hr{border:0;border-top:1px solid var(--line);margin:12px 0}
   .msg.user .bubble{background:var(--brand);color:#fff;border-bottom-right-radius:4px}
   .msg.assistant .bubble{background:#fff;border:1px solid var(--line);border-bottom-left-radius:4px}
   .time{font-size:11px;color:var(--muted);align-self:flex-end;margin-bottom:2px}
@@ -101,10 +116,35 @@
   .evt .tm{color:var(--muted);font-size:11px;margin-left:6px}
   .impr{margin:4px 0 0 16px;padding:0}
   .impr li{margin-bottom:4px}
+  .login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg)}
+  .login-card{width:min(390px,92vw);padding:28px;background:#fff;border:1px solid var(--line);border-radius:14px;
+              box-shadow:0 10px 35px rgba(20,35,60,.08)}
+  .login-card h1{font-size:20px;margin:0 0 8px}.login-card p{color:var(--muted);font-size:13px;margin:0 0 18px}
+  .admin-modal{position:fixed;inset:0;background:rgba(25,35,55,.35);display:none;align-items:center;justify-content:center;z-index:30}
+  .admin-modal.open{display:flex}.admin-card{background:#fff;width:min(900px,96vw);max-height:92vh;overflow:auto;border-radius:12px;padding:18px}
+  .admin-head{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding-bottom:10px}
+  .admin-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:12px}
+  .admin-section{border:1px solid var(--line);border-radius:10px;padding:14px;margin-top:12px}
+  .admin-section h3{font-size:14px;margin:0 0 12px}.field{display:flex;flex-direction:column;gap:5px;margin:8px 0}
+  .field input,.field select{height:36px;border:1px solid var(--line);border-radius:7px;padding:0 9px;font:inherit}
+  .primary{background:var(--brand);color:#fff;border:0;border-radius:7px;padding:9px 14px;cursor:pointer}
+  .user-row{display:grid;grid-template-columns:1fr 2fr auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+  .user-row select{min-height:54px;border:1px solid var(--line);border-radius:7px;padding:5px}
+  .muted{color:var(--muted);font-size:12px}
+  @media(max-width:700px){.admin-grid{grid-template-columns:1fr}.user-row{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
-<div class="app">
+<section id="loginScreen" class="login-screen" style="display:none">
+  <form id="loginForm" class="login-card">
+    <h1>代码知识工作台</h1><p>使用管理员或普通账号登录</p>
+    <div class="field"><label for="loginUser">用户名</label><input id="loginUser" autocomplete="username" required></div>
+    <div class="field"><label for="loginPassword">密码</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
+    <button class="primary" style="width:100%;margin-top:8px">登录</button>
+    <div id="loginError" class="muted" style="margin-top:10px;color:#c0392b"></div>
+  </form>
+</section>
+<div class="app" id="appRoot" style="display:none">
   <aside class="sidebar">
     <div class="brand">代码知识工作台<span class="sub">codelib</span></div>
     <div class="ro">🔒 只读模式：仅可查询库，不会修改所关联工程的文件</div>
@@ -126,6 +166,9 @@
         <div id="convMeta" class="meta">先在左侧选择一个知识库</div>
       </div>
       <div class="topright">
+        <span id="userBadge" class="badge"></span>
+        <button id="adminBtn" class="ghost" style="display:none">账号/知识库管理</button>
+        <button id="logoutBtn" class="ghost">退出</button>
         <button id="traceBtn" class="ghost">溯源/评估</button>
         <button id="delBtn" class="ghost">删除对话</button>
       </div>
@@ -145,16 +188,44 @@
     <button id="drawerClose" class="ghost">关闭</button></span></div>
   <div id="drawerBody" class="drawer-body"><div class="hint">先提问，再点「溯源/评估」查看该次调用的完整过程。</div></div>
 </aside>
+<aside id="adminPanel" class="admin-modal">
+  <div class="admin-card">
+    <div class="admin-head"><strong>管理员：账号与知识库</strong><button id="adminClose" class="ghost">关闭</button></div>
+    <div class="admin-grid">
+      <form id="createWorkspaceForm" class="admin-section">
+        <h3>创建知识库</h3>
+        <div class="field"><label>知识库名称</label><input name="name" required></div>
+        <div class="field"><label>知识库 ID（可留空自动生成）</label><input name="id"></div>
+        <div class="field"><label>本机工程目录</label><input name="path" placeholder="D:/projects/my-service" required></div>
+        <div class="field"><label>说明</label><input name="description"></div>
+        <button class="primary">创建并建库</button>
+        <div class="muted" style="margin-top:8px">普通账号需单独获授权后才能查询。</div>
+      </form>
+      <form id="createUserForm" class="admin-section">
+        <h3>创建账号</h3>
+        <div class="field"><label>用户名</label><input name="username" minlength="2" required></div>
+        <div class="field"><label>初始密码（至少 8 位）</label><input name="password" type="password" minlength="8" required></div>
+        <div class="field"><label>角色</label><select name="role"><option value="user">普通账号</option><option value="admin">管理员</option></select></div>
+        <div class="field"><label>允许访问的知识库（管理员自动可访问全部）</label><select name="workspace_ids" id="newUserWorkspaces" multiple size="4"></select></div>
+        <button class="primary">创建账号</button>
+      </form>
+    </div>
+    <section class="admin-section"><h3>账号与知识库授权</h3><div id="adminUsers" class="muted">加载中…</div></section>
+  </div>
+</aside>
+<script src="/static/markdown-it.min.js"></script>
 <script>
 const $ = (s) => document.querySelector(s);
-const state = { convId:null, libId:null, libraries:[], conversations:[], sending:false, lastTraceId:null };
+const state = { convId:null, libId:null, libraries:[], conversations:[], sending:false, lastTraceId:null, user:null, allLibraries:[] };
+const markdown = window.markdownit({html:false, linkify:true, typographer:false});
+markdown.disable("image");
 
 async function api(path, opts={}){
   const res = await fetch(path, Object.assign({headers:{"Content-Type":"application/json"}}, opts));
   if(!res.ok){
     let msg = "HTTP " + res.status;
     try{ const j = await res.json(); msg = j.detail || JSON.stringify(j);}catch(e){}
-    throw new Error(msg);
+    const err=new Error(msg); err.status=res.status; throw err;
   }
   return res.json();
 }
@@ -170,9 +241,9 @@ function renderLibraries(){
     const el=document.createElement("div");
     el.className="lib"+(l.id===state.libId?" active":"");
     const ready=l.ready;
-    el.innerHTML=`<div class="lib-name"><span><span class="dot ${ready?'ready':'empty'}"></span>${l.name||l.id}</span>
+    el.innerHTML=`<div class="lib-name"><span><span class="dot ${ready?'ready':'empty'}"></span>${esc(l.name||l.id)}</span>
       <span style="font-weight:400;color:var(--muted);font-size:11px">${ready?'可查询':'未建库'}</span></div>
-      <div class="lib-meta">${l.desc||''} ${ready?('· '+l.counts.chunks+' 块 / '+l.counts.symbols+' 符号'):''}</div>`;
+      <div class="lib-meta">${esc(l.desc||'')} ${ready?('· '+l.counts.chunks+' 块 / '+l.counts.symbols+' 符号'):''}</div>`;
     el.onclick=async ()=>{ await openEmptyOrNew(l.id); };
     box.appendChild(el);
   });
@@ -211,11 +282,14 @@ function emptyHtml(){ return `<div class="empty"><div class="empty-icon">💬</d
   <div>选择左侧知识库，新建或打开对话开始提问</div>
   <div style="font-size:12px">示例：这个工程是做什么的？／上行消息怎么处理？／有哪些 Kafka topic？</div></div>`; }
 
+function renderMarkdown(text){ return markdown.render(String(text||"")); }
+
 function addBubble(role,text,ts){
   const box=$("#messages"); const e=box.querySelector(".empty"); if(e) e.remove();
   const wrap=document.createElement("div"); wrap.className="msg "+(role==="user"?"user":"assistant");
   const av=document.createElement("div"); av.className="avatar"; av.textContent=role==="user"?"我":"AI";
-  const bub=document.createElement("div"); bub.className="bubble"; bub.textContent=text;
+  const bub=document.createElement("div"); bub.className="bubble";
+  if(role==="user") bub.textContent=text; else bub.innerHTML=renderMarkdown(text);
   const tm=document.createElement("div"); tm.className="time"; tm.textContent=fmtTime(ts||Date.now()/1000);
   wrap.appendChild(av); wrap.appendChild(bub); wrap.appendChild(tm);
   box.appendChild(wrap); box.scrollTop=box.scrollHeight; return wrap;
@@ -235,7 +309,7 @@ function appendSources(src){
 async function loadLibraries(){
   const d=await api("/api/workspaces");
   state.libraries=d.workspaces||[];
-  if(!state.libId && state.libraries.length) state.libId=state.libraries[0].id;
+  if(!state.libraries.some(l=>l.id===state.libId)) state.libId=state.libraries.length?state.libraries[0].id:null;
   renderLibraries();
 }
 async function loadConversations(){
@@ -295,18 +369,93 @@ async function send(){
 function autoGrow(){ const t=$("#input"); t.style.height="auto";
   t.style.height=Math.min(t.scrollHeight,160)+"px"; }
 
+async function loadWorkspace(){
+  await loadLibraries(); await loadConversations();
+  const saved=localStorage.getItem("codelib_conv");
+  if(saved && state.conversations.some(c=>c.id===saved)) await openConversation(saved);
+  else if(state.conversations.length) await openConversation(state.conversations[0].id);
+  else { state.convId=null; renderMessages([]); resetHeader(); }
+  $("#footHint").textContent = state.libraries.filter(l=>l.ready).length
+    ? `账号 ${state.user.username} · ${state.libraries.length} 个授权库，${state.libraries.filter(l=>l.ready).length} 个可查询`
+    : "当前没有可查询的知识库，请联系管理员授权";
+}
 async function init(){
   try{
-    await loadLibraries(); await loadConversations();
-    const saved=localStorage.getItem("codelib_conv");
-    if(saved && state.conversations.some(c=>c.id===saved)) await openConversation(saved);
-    else if(state.conversations.length) await openConversation(state.conversations[0].id);
-    else { renderMessages([]); resetHeader(); }
-    $("#footHint").textContent = state.libraries.filter(l=>l.ready).length
-      ? `共 ${state.libraries.length} 个库，${state.libraries.filter(l=>l.ready).length} 个可查询`
-      : "提示：先在命令行执行 kb-build 建库";
-  }catch(e){ $("#messages").innerHTML=`<div class="empty">初始化失败：${e.message}</div>`; }
+    const me=await api("/api/auth/me"); state.user=me.user;
+    $("#loginScreen").style.display="none"; $("#appRoot").style.display="flex";
+    $("#userBadge").textContent=`${state.user.username} · ${state.user.role==='admin'?'管理员':'普通账号'}`;
+    $("#adminBtn").style.display=state.user.role==='admin'?"inline-block":"none";
+    $("#traceBtn").style.display=state.user.role==='admin'?"inline-block":"none";
+    await loadWorkspace();
+  }catch(e){
+    if(e.status===401){ $("#appRoot").style.display="none"; $("#loginScreen").style.display="flex"; return; }
+    $("#messages").innerHTML=`<div class="empty">初始化失败：${esc(e.message)}</div>`;
+  }
 }
+
+function selectedValues(select){ return Array.from(select.selectedOptions).map(o=>o.value); }
+async function openAdminPanel(){
+  $("#adminPanel").classList.add("open");
+  const [ud,wd]=await Promise.all([api("/api/admin/users"),api("/api/admin/workspaces")]);
+  state.allLibraries=wd.workspaces||[];
+  const opts=state.allLibraries.map(w=>`<option value="${esc(w.id)}">${esc(w.name)} (${esc(w.id)})</option>`).join("");
+  $("#newUserWorkspaces").innerHTML=opts;
+  const box=$("#adminUsers"); box.innerHTML="";
+  (ud.users||[]).forEach(u=>{
+    const row=document.createElement("div"); row.className="user-row";
+    const selected=new Set(u.workspace_ids||[]);
+    row.innerHTML=`<div><b>${esc(u.username)}</b><div class="muted">${u.role==='admin'?'管理员':'普通账号'} · ${u.active?'启用':'停用'}</div></div>
+      <select multiple data-user-workspaces="${u.id}" ${u.role==='admin'?'disabled':''}>${state.allLibraries.map(w=>`<option value="${esc(w.id)}" ${selected.has(w.id)?'selected':''}>${esc(w.name)} (${esc(w.id)})</option>`).join("")}</select>
+      <div><button class="ghost save-access" data-user="${u.id}" ${u.role==='admin'?'disabled':''}>保存授权</button>
+      <button class="ghost reset-password" data-user="${u.id}">重置密码</button>
+      <button class="ghost toggle-user" data-user="${u.id}" data-active="${u.active}">${u.active?'停用':'启用'}</button></div>`;
+    box.appendChild(row);
+  });
+  box.querySelectorAll(".save-access").forEach(btn=>btn.onclick=async()=>{
+    const uid=btn.dataset.user, sel=box.querySelector(`[data-user-workspaces="${uid}"]`);
+    try{ await api(`/api/admin/users/${uid}/workspaces`,{method:"PUT",body:JSON.stringify({workspace_ids:selectedValues(sel)})}); alert("授权已更新"); }
+    catch(e){ alert(e.message); }
+  });
+  box.querySelectorAll(".toggle-user").forEach(btn=>btn.onclick=async()=>{
+    try{ await api(`/api/admin/users/${btn.dataset.user}/active`,{method:"PATCH",body:JSON.stringify({active:btn.dataset.active!=='true'})}); await openAdminPanel(); }
+    catch(e){ alert(e.message); }
+  });
+  box.querySelectorAll(".reset-password").forEach(btn=>btn.onclick=async()=>{
+    const password=prompt("输入至少 8 位的新密码：");
+    if(password===null) return;
+    try{
+      await api(`/api/admin/users/${btn.dataset.user}/password`,{method:"PUT",body:JSON.stringify({password})});
+      alert("密码已重置，该账号的现有登录会话已注销。");
+      if(Number(btn.dataset.user)===state.user.id){
+        await api("/api/auth/logout",{method:"POST"}); state.user=null; state.convId=null;
+        $("#appRoot").style.display="none"; $("#loginScreen").style.display="flex";
+      }
+    }catch(e){ alert(e.message); }
+  });
+}
+
+$("#loginForm").onsubmit=async(e)=>{
+  e.preventDefault(); $("#loginError").textContent="";
+  try{ await api("/api/auth/login",{method:"POST",body:JSON.stringify({username:$("#loginUser").value,password:$("#loginPassword").value})}); await init(); }
+  catch(err){ $("#loginError").textContent=err.message; }
+};
+$("#logoutBtn").onclick=async()=>{ try{await api("/api/auth/logout",{method:"POST"});}finally{state.user=null;state.convId=null;$("#appRoot").style.display="none";$("#loginScreen").style.display="flex";} };
+$("#adminBtn").onclick=()=>openAdminPanel().catch(e=>alert(e.message));
+$("#adminClose").onclick=()=>$("#adminPanel").classList.remove("open");
+$("#adminPanel").onclick=e=>{if(e.target===$("#adminPanel")) $("#adminPanel").classList.remove("open");};
+$("#createWorkspaceForm").onsubmit=async(e)=>{
+  e.preventDefault(); const f=new FormData(e.target); const btn=e.target.querySelector("button"); btn.disabled=true;
+  try{ const r=await api("/api/admin/workspaces",{method:"POST",body:JSON.stringify({name:f.get("name"),id:f.get("id"),path:f.get("path"),description:f.get("description")})});
+    alert(`知识库 ${r.workspace.name} 已创建并建库`); e.target.reset(); await loadWorkspace(); await openAdminPanel(); }
+  catch(err){alert(err.message);}finally{btn.disabled=false;}
+};
+$("#createUserForm").onsubmit=async(e)=>{
+  e.preventDefault(); const f=new FormData(e.target); const role=f.get("role");
+  try{ await api("/api/admin/users",{method:"POST",body:JSON.stringify({username:f.get("username"),password:f.get("password"),role,
+      workspace_ids:role==='user'?selectedValues($("#newUserWorkspaces")):[]})});
+    alert("账号已创建"); e.target.reset(); await openAdminPanel(); }
+  catch(err){alert(err.message);}
+};
 
 $("#newBtn").onclick=async ()=>{ try{ await newConversation(); }catch(e){ alert(e.message);} };
 $("#libReload").onclick=async ()=>{ try{ await loadLibraries(); }catch(e){ alert(e.message);} };
@@ -323,7 +472,7 @@ $("#input").addEventListener("input",autoGrow);
 $("#input").addEventListener("keydown",(e)=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(); }});
 
 /* ---------- 溯源/评估 ---------- */
-function esc(s){ return String(s==null?"":s).replace(/[&<>]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m])); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
 async function openDrawer(){
   $("#drawer").classList.add("open");
   const body=$("#drawerBody"); body.innerHTML='<div class="hint">加载中…</div>';
@@ -356,6 +505,10 @@ async function showTrace(tid){
   if(ev.retrieve){
     const cs=(ev.retrieve.citations||[]).map(c=>`- ${c.path}:${c.start_line}-${c.end_line} (${c.symbol||''})`).join("\n");
     h+=`<div class="kv"><h4>检索（${esc(ev.retrieve.source)}，上下文 ${esc(ev.retrieve.context_tokens)} token / 预算 ${esc(ev.retrieve.budget_tokens)}）</h4><pre>${esc(cs||'无')}</pre></div>`;
+  }
+  if(ev.evidence){
+    const e=ev.evidence;
+    h+=`<div class="kv"><h4>证据主题匹配（${Math.round(e.coverage*100)}%，门槛 ${Math.round(e.min_coverage*100)}%）</h4><pre>命中：${esc((e.covered||[]).join('、')||'无')}\n缺失：${esc((e.missing||[]).join('、')||'无')}\n作为工程范围忽略：${esc((e.ignored_scope||[]).join('、')||'无')}\n词面命中仅用于排除明显无关内容，不代表证据完整。</pre></div>`;
   }
   if(ev.prompt) h+=`<div class="kv"><h4>发给大模型的协议（system ${esc(ev.prompt.system_tokens)} / user ${esc(ev.prompt.user_tokens)} token）</h4>
     <details><summary style="cursor:pointer;color:var(--brand);font-size:12px">展开 system</summary><pre>${esc(ev.prompt.system)}</pre></details>
@@ -400,7 +553,7 @@ function renderAudit(r){
   const acts=r.improvement_actions||[];
   if(acts.length){
     h+='<div style="margin-top:8px"><b>改进分流（按可解决方式）</b></div>';
-    const label={boost:"调权重(可自愈)",ingest:"需补召回/扩库",config:"需改配置/提示词"};
+    const label={boost:"可调整召回排序",ingest:"需补召回/扩库",config:"需改门槛/检索/提示词"};
     acts.forEach(a=>{ h+=`<div style="margin:3px 0;font-size:12px"><span class="tag ${a.kind==='boost'?'ok':(a.kind==='ingest'?'bad':'fair')}">${esc(label[a.kind]||a.kind)}</span>${esc(a.improvement)}</div>`; });
   } else if(imps.length){
     h+='<div style="margin-top:8px"><b>harness 可提升点</b></div><ul class="impr">'+imps.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>';

@@ -17,6 +17,7 @@ except Exception:
     pass
 
 from app.config import AppConfig, IndexConfig, WorkspaceConfig  # noqa: E402
+from app.evaluate import _classify_improvement  # noqa: E402
 from app.feedback import extract_boost_candidates, apply_report_to_boosts  # noqa: E402
 from app.knowledge import KnowledgeStore  # noqa: E402
 from app.knowledge.build import build_workspace, ws_kb_id  # noqa: E402
@@ -47,6 +48,28 @@ def main() -> int:
     assert ("path", "config/kafka_config.go") in kinds
     assert ("symbol", "ResolveTopic") in kinds
     assert not any("heartbeat" in p for _, p in kinds), "无关项不应成为 boost"
+    assert ("dir", "config/") not in kinds, "明确的文件建议不应为整个父目录加权"
+
+    print("\n== 1.5 门槛误拦、拒答和非排序建议不能反向污染权重 ==")
+    assert _classify_improvement("这正是期望行为：需要补召回/扩库才能作答，调权重无效") == "ingest"
+    assert _classify_improvement("回答大量内容不在候选里：加强对证据的约束、或补充相关的候选片段") == "config"
+    assert _classify_improvement("修正证据门槛的分词和工程名处理") == "config"
+    assert _classify_improvement("应召回 config/kafka_config.go 中的解析实现") == "boost"
+    noisy_report = {
+        "improvement_actions": [
+            {"kind": "config", "improvement": "应补充 src/unused.go 的提示词约束"},
+            {"kind": "ingest", "improvement": "未纳入 AGENTS.md，应纳入知识库"},
+        ],
+        "llm": {"reasons": ["候选未包含 .workbuddy/memory/MEMORY.md"]},
+        "improvements": ["应召回 sql/create_nlp_parse_record.sql"],
+    }
+    assert extract_boost_candidates(noisy_report) == []
+    for text in ("候选缺少 AGENTS.md，但本问题与其无关", "已召回 config/kafka_config.go，无需补充"):
+        assert extract_boost_candidates({"improvements": [text]}) == []
+    assert extract_boost_candidates({
+        "improvements": ["应召回 config/kafka_config.go"],
+        "retrieved_paths": ["config/kafka_config.go"],
+    }) == []
 
     print("\n== 2. 写入 boost 并检索加权 ==")
     tmp = Path(tempfile.mkdtemp(prefix="codelib_fb_"))

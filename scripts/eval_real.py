@@ -23,7 +23,7 @@ except Exception:
 
 from app import indexer  # noqa: E402
 from app.bot import BotService  # noqa: E402
-from app.config import AppConfig, IndexConfig, WorkspaceConfig  # noqa: E402
+from app.config import AppConfig, WorkspaceConfig  # noqa: E402
 from app.store import Store  # noqa: E402
 
 
@@ -31,14 +31,15 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--path", required=True, help="要索引的工程目录")
     ap.add_argument("--question", default="这个工程的主要入口和核心逻辑在哪里？")
-    ap.add_argument("--budget", type=int, default=3000)
+    ap.add_argument("--budget", type=int, default=4000,
+                    help="全局检索上下文 token 预算（knowledge.retrieve.budget_tokens）")
     args = ap.parse_args()
 
     tmp = Path(tempfile.mkdtemp(prefix="codelib_eval_"))
-    ws = WorkspaceConfig(id="target", name=Path(args.path).name, path=args.path,
-                         index=IndexConfig(token_budget=args.budget))
+    ws = WorkspaceConfig(id="target", name=Path(args.path).name, path=args.path)
     cfg = AppConfig(data_dir=str(tmp), default_workspace="target",
-                    workspaces=[ws], memory={"enabled": True})
+                    workspaces=[ws], memory={"enabled": True},
+                    knowledge={"retrieve": {"budget_tokens": args.budget}})
     store = Store(cfg.db_path)
 
     t0 = time.time()

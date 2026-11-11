@@ -15,20 +15,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
+from pydantic import BaseModel, Field
 
 from .bot import BotService
 from .channels import FeishuChannel, WeComChannel
 from .config import AppConfig
+from .config import WorkspaceConfig
 from .memory import MemoryManager
 from .store import Store
+from .security import SESSION_COOKIE, SESSION_TTL_SECONDS, issue_session, session_user, token_hash
 from .watcher import watch_loop
 
 log = logging.getLogger("codelib")
@@ -50,6 +53,37 @@ class NewConversationRequest(BaseModel):
 class MessageRequest(BaseModel):
     content: str
     deep: bool = False
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class NewUserRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "user"
+    workspace_ids: list[str] = Field(default_factory=list)
+
+
+class WorkspaceCreateRequest(BaseModel):
+    name: str
+    path: str
+    id: Optional[str] = None
+    description: str = ""
+
+
+class WorkspaceAccessRequest(BaseModel):
+    workspace_ids: list[str]
+
+
+class UserActiveRequest(BaseModel):
+    active: bool
+
+
+class UserPasswordRequest(BaseModel):
+    password: str
 
 
 _WEB_INDEX = Path(__file__).parent / "web" / "index.html"
@@ -84,6 +118,20 @@ def _format_answer(ans) -> str:
 def create_app(config_path: Optional[str] = None) -> FastAPI:
     cfg = AppConfig.load(config_path)
     store = Store(cfg.db_path)
+    bootstrap = cfg.auth.get("bootstrap_admin", {}) or {}
+    created_admin = store.bootstrap_admin(str(bootstrap.get("username", "")),
+                                         str(bootstrap.get("password", "")))
+    if created_admin:
+        log.warning("Bootstrapped initial administrator account: %s", created_admin["username"])
+    elif not store.list_users():
+        log.error("No accounts exist. Configure auth.bootstrap_admin before first startup.")
+    configured_ids = {w.id for w in cfg.workspaces}
+    for row in store.list_managed_workspaces():
+        if row["id"] not in configured_ids:
+            cfg.workspaces.append(WorkspaceConfig(
+                id=row["id"], name=row["name"], path=row["path"],
+                description=row.get("description", "")))
+            configured_ids.add(row["id"])
     bot = BotService(cfg, store, MemoryManager(store, cfg.memory))
     wecom = WeComChannel(cfg.channel("wecom"))
     feishu = FeishuChannel(cfg.channel("feishu"))
@@ -105,9 +153,54 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     app.state.bot = bot
     app.state.store = store
 
-    def require_admin(token: str) -> None:
-        if cfg.admin_token and token != cfg.admin_token:
-            raise HTTPException(status_code=401, detail="invalid admin token")
+    def current_user(request: Request) -> Dict[str, Any]:
+        user = session_user(store, request)
+        if not user:
+            raise HTTPException(status_code=401, detail="请先登录")
+        return user
+
+    def require_admin(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+        if user["role"] != "admin":
+            raise HTTPException(status_code=403, detail="需要管理员权限")
+        return user
+
+    def user_workspace(user: Dict[str, Any], workspace_id: Optional[str] = None):
+        if user["role"] == "admin":
+            try:
+                return cfg.workspace(workspace_id or None)
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+        allowed = store.user_workspace_ids(user["id"])
+        if not allowed:
+            raise HTTPException(status_code=403, detail="管理员尚未为该账号分配知识库")
+        if workspace_id:
+            try:
+                ws = cfg.workspace(workspace_id)
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(status_code=404, detail="知识库不存在") from exc
+            if ws.id not in allowed:
+                raise HTTPException(status_code=403, detail="该账号没有访问此知识库的权限")
+            return ws
+        target = cfg.default_workspace if cfg.default_workspace in allowed else allowed[0]
+        return cfg.workspace(target)
+
+    def resolve_workspace_ids(workspace_ids: list[str]) -> list[str]:
+        resolved = []
+        for requested_id in workspace_ids:
+            ws = next((item for item in cfg.workspaces
+                       if requested_id in (item.id, item.name, Path(item.path).name)), None)
+            if ws is None:
+                raise HTTPException(status_code=400, detail=f"未知知识库：{requested_id}")
+            resolved.append(ws.id)
+        return list(dict.fromkeys(resolved))
+
+    def check_session_access(user: Dict[str, Any], session: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not session:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        if user["role"] != "admin" and int(session.get("owner_user_id") or 0) != int(user["id"]):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        user_workspace(user, session["workspace_id"])
+        return session
 
     @app.middleware("http")
     async def readonly_guard(request: Request, call_next):
@@ -129,33 +222,158 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     async def root() -> HTMLResponse:
         return HTMLResponse(_web_html())
 
-    @app.get("/healthz")
-    async def healthz() -> Dict[str, Any]:
-        return {"ok": True, "llm": cfg.llm.available, "read_only": cfg.read_only,
-                "workspaces": [w.id for w in cfg.workspaces]}
+    @app.get("/static/markdown-it.min.js")
+    async def markdown_vendor() -> FileResponse:
+        vendor_path = Path(__file__).parent / "web" / "vendor" / "markdown-it.min.js"
+        return FileResponse(vendor_path, media_type="text/javascript")
 
-    # ---------------- 网页对话：会话与历史 ----------------
-    @app.get("/api/workspaces")
-    async def api_workspaces() -> Dict[str, Any]:
+    @app.post("/api/auth/login")
+    async def login(req: LoginRequest, request: Request, response: Response) -> Dict[str, Any]:
+        user = store.authenticate_user(req.username, req.password)
+        if not user:
+            raise HTTPException(status_code=401, detail="用户名或密码错误")
+        token = issue_session(store, user)
+        response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_TTL_SECONDS,
+                            httponly=True, secure=request.url.scheme == "https",
+                            samesite="lax", path="/")
+        return {"user": user}
+
+    @app.post("/api/auth/logout")
+    async def logout(request: Request, response: Response) -> Dict[str, Any]:
+        token = request.cookies.get(SESSION_COOKIE, "")
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            token = auth[7:].strip()
+        if token:
+            store.revoke_auth_session(token_hash(token))
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return {"ok": True}
+
+    @app.get("/api/auth/me")
+    async def auth_me(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+        return {"user": user}
+
+    @app.get("/api/admin/users")
+    async def admin_users(user: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+        return {"users": store.list_users()}
+
+    @app.post("/api/admin/users")
+    async def admin_create_user(req: NewUserRequest,
+                                admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+        if req.role not in ("admin", "user"):
+            raise HTTPException(status_code=400, detail="角色只能是 admin 或 user")
+        workspace_ids = resolve_workspace_ids(req.workspace_ids) if req.role == "user" else []
+        try:
+            created = store.create_user(req.username, req.password, req.role)
+            if req.role == "user":
+                store.set_user_workspaces(created["id"], workspace_ids, admin["id"])
+                created["workspace_ids"] = store.user_workspace_ids(created["id"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"user": created}
+
+    @app.put("/api/admin/users/{user_id}/workspaces")
+    async def admin_set_user_workspaces(user_id: int, req: WorkspaceAccessRequest,
+                                        admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+        workspace_ids = resolve_workspace_ids(req.workspace_ids)
+        try:
+            store.set_user_workspaces(user_id, workspace_ids, admin["id"])
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="用户不存在") from exc
+        return {"user_id": user_id, "workspace_ids": store.user_workspace_ids(user_id)}
+
+    @app.patch("/api/admin/users/{user_id}/active")
+    async def admin_set_user_active(user_id: int, req: UserActiveRequest,
+                                    admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+        try:
+            store.set_user_active(user_id, req.active)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="用户不存在") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True}
+
+    @app.put("/api/admin/users/{user_id}/password")
+    async def admin_reset_user_password(user_id: int, req: UserPasswordRequest,
+                                        admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+        try:
+            store.reset_user_password(user_id, req.password)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="用户不存在") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True}
+
+    @app.get("/api/admin/workspaces")
+    async def admin_workspaces(admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+        return {"workspaces": list_workspace_info(admin, include_path=True)}
+
+    def list_workspace_info(user: Dict[str, Any], include_path: bool = False) -> list[Dict[str, Any]]:
         from .knowledge import KnowledgeStore
         from .knowledge.build import ws_kb_id
         kb = KnowledgeStore(cfg.knowledge_db_path)
+        allowed = None if user["role"] == "admin" else set(store.user_workspace_ids(user["id"]))
         items = []
         for w in cfg.workspaces:
+            if allowed is not None and w.id not in allowed:
+                continue
             try:
                 counts = kb.counts(ws_kb_id(w.id, w.name))
             except Exception:
                 counts = {"chunks": 0, "symbols": 0, "files": 0, "edges": 0, "doc_chunks": 0}
-            items.append({
-                "id": w.id, "name": w.name, "desc": w.description or "",
-                "path": w.path, "ready": counts["chunks"] > 0, "counts": counts,
-            })
-        return {"workspaces": items, "read_only": cfg.read_only,
-                "default_workspace": cfg.default_workspace}
+            item = {"id": w.id, "name": w.name, "desc": w.description or "",
+                    "ready": counts["chunks"] > 0, "counts": counts}
+            if include_path:
+                item["path"] = w.path
+            items.append(item)
+        return items
+
+    @app.post("/api/admin/workspaces")
+    async def admin_create_workspace(req: WorkspaceCreateRequest,
+                                     admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
+        name = req.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="知识库名称不能为空")
+        raw_id = (req.id or "").strip().lower()
+        workspace_id = re.sub(r"[^a-z0-9_-]+", "-", raw_id or name.lower()).strip("-_")[:64]
+        if not workspace_id:
+            raise HTTPException(status_code=400, detail="无法从名称生成知识库 ID，请手动指定 ID")
+        if any(w.id == workspace_id for w in cfg.workspaces):
+            raise HTTPException(status_code=409, detail="知识库 ID 已存在")
+        path = Path(os.path.expanduser(req.path)).resolve()
+        if not path.is_dir():
+            raise HTTPException(status_code=400, detail="目录不存在或不是目录")
+        ws = WorkspaceConfig(id=workspace_id, name=name, path=str(path),
+                             description=req.description.strip())
+        try:
+            store.add_managed_workspace(ws.id, ws.name, ws.path, ws.description)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        cfg.workspaces.append(ws)
+        try:
+            from . import indexer
+            from .knowledge.build import build_workspace
+            await asyncio.to_thread(indexer.index_workspace, store, ws, True)
+            result = await asyncio.to_thread(build_workspace, cfg, ws, True)
+        except Exception as exc:
+            log.exception("Knowledge base indexing failed: %s", ws.id)
+            raise HTTPException(status_code=500, detail=f"知识库已登记，但建库失败：{exc}") from exc
+        return {"workspace": {"id": ws.id, "name": ws.name, "path": ws.path,
+                              "ready": True, "counts": result.get("totals", {})}}
+
+    @app.get("/healthz")
+    async def healthz() -> Dict[str, Any]:
+        return {"ok": True, "llm": cfg.llm.available, "read_only": cfg.read_only,
+                "workspace_count": len(cfg.workspaces)}
+
+    # ---------------- 网页对话：会话与历史 ----------------
+    @app.get("/api/workspaces")
+    async def api_workspaces(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+        return {"workspaces": list_workspace_info(user, include_path=user["role"] == "admin"),
+                "read_only": cfg.read_only, "default_workspace": cfg.default_workspace}
 
     @app.get("/api/knowledge/status")
-    async def api_knowledge_status(x_admin_token: str = Header(default="")) -> Dict[str, Any]:
-        require_admin(x_admin_token)
+    async def api_knowledge_status(admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
         from .knowledge import KnowledgeStore
         from .knowledge.build import ws_kb_id
         kb = KnowledgeStore(cfg.knowledge_db_path)
@@ -164,8 +382,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     # ---------------- 全链路留痕 / 过程评估 ----------------
     @app.get("/api/traces")
     async def api_traces(workspace: Optional[str] = None, limit: int = 100,
-                         x_admin_token: str = Header(default="")) -> Dict[str, Any]:
-        require_admin(x_admin_token)
+                         admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
         wid = None
         if workspace:
             try:
@@ -175,8 +392,8 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         return {"traces": store.list_traces(wid, limit=limit)}
 
     @app.get("/api/traces/{trace_id}")
-    async def api_trace(trace_id: str, x_admin_token: str = Header(default="")) -> Dict[str, Any]:
-        require_admin(x_admin_token)
+    async def api_trace(trace_id: str,
+                        admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
         t = store.get_trace(trace_id)
         if not t:
             raise HTTPException(status_code=404, detail="trace not found")
@@ -184,8 +401,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
     @app.post("/api/traces/{trace_id}/evaluate")
     async def api_evaluate(trace_id: str, learn: bool = True,
-                           x_admin_token: str = Header(default="")) -> Dict[str, Any]:
-        require_admin(x_admin_token)
+                           admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
         t = store.get_trace(trace_id)
         if not t:
             raise HTTPException(status_code=404, detail="trace not found")
@@ -210,8 +426,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
     @app.get("/api/boosts")
     async def api_boosts(workspace: Optional[str] = None,
-                         x_admin_token: str = Header(default="")) -> Dict[str, Any]:
-        require_admin(x_admin_token)
+                         admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
         from .knowledge import KnowledgeStore
         from .knowledge.build import ws_kb_id
         kb = KnowledgeStore(cfg.knowledge_db_path)
@@ -220,8 +435,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
     @app.delete("/api/boosts")
     async def api_boost_delete(kind: str, pattern: str, workspace: Optional[str] = None,
-                               x_admin_token: str = Header(default="")) -> Dict[str, Any]:
-        require_admin(x_admin_token)
+                               admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
         from .knowledge import KnowledgeStore
         from .knowledge.build import ws_kb_id
         kb = KnowledgeStore(cfg.knowledge_db_path)
@@ -230,8 +444,8 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         return {"ok": True}
 
     @app.get("/api/traces/{trace_id}/audits")
-    async def api_trace_audits(trace_id: str, x_admin_token: str = Header(default="")) -> Dict[str, Any]:
-        require_admin(x_admin_token)
+    async def api_trace_audits(trace_id: str,
+                               admin: Dict[str, Any] = Depends(require_admin)) -> Dict[str, Any]:
         t = store.get_trace(trace_id)
         if not t:
             raise HTTPException(status_code=404, detail="trace not found")
@@ -239,35 +453,40 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
     @app.post("/api/conversations")
     async def create_conversation(req: NewConversationRequest,
-                                  x_admin_token: str = Header(default="")) -> Dict[str, Any]:
-        require_admin(x_admin_token)
-        ws = cfg.workspace(req.workspace or None)
+                                  user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+        ws = user_workspace(user, req.workspace)
         # 规则：同一库最多只有一个“空的新对话”。
         #   - 已有空对话 -> 直接复用，不再新建
         #   - 没有空对话 -> 建一个
-        existing = store.find_empty_session(ws.id)
+        existing = store.find_empty_session(ws.id, owner_user_id=user["id"])
         reused = existing is not None
         if existing:
             conv = existing
         else:
             sid = uuid.uuid4().hex
-            conv = store.create_session(sid, ws.id, req.title or "新对话")
-        store.cleanup_empty_sessions(None)          # 兜底：全局只留一个空对话
+            conv = store.create_session(sid, ws.id, req.title or "新对话", owner_user_id=user["id"])
+        store.cleanup_empty_sessions(owner_user_id=user["id"])
         return {"conversation": conv, "reused": reused,
                 "workspace": {"id": ws.id, "name": ws.name}}
 
     @app.get("/api/conversations")
     async def list_conversations(workspace: Optional[str] = None,
-                                 x_admin_token: str = Header(default="")) -> Dict[str, Any]:
-        require_admin(x_admin_token)
-        store.cleanup_empty_sessions(None)          # 列表前清理多余空对话
-        wid = None
+                                 user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+        owner_id = None if user["role"] == "admin" else user["id"]
         if workspace:
-            try:
-                wid = cfg.workspace(workspace).id
-            except Exception:
-                wid = workspace
-        items = store.list_sessions(wid)
+            ws = user_workspace(user, workspace)
+            items = store.list_sessions(ws.id, owner_user_id=owner_id)
+        else:
+            if owner_id is None:
+                items = store.list_sessions(owner_user_id=None)
+            else:
+                allowed = store.user_workspace_ids(user["id"])
+                items = []
+                for wid in allowed:
+                    items.extend(store.list_sessions(wid, owner_user_id=owner_id))
+                items.sort(key=lambda item: item["updated_at"], reverse=True)
+                items = items[:200]
+        store.cleanup_empty_sessions(owner_user_id=owner_id)
         # 标记哪些是空对话，前端据此置灰/复用
         for it in items:
             it["empty"] = store.is_empty_session(it["id"])
@@ -275,11 +494,8 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
     @app.get("/api/conversations/{sid}")
     async def get_conversation(sid: str,
-                               x_admin_token: str = Header(default="")) -> Dict[str, Any]:
-        require_admin(x_admin_token)
-        sess = store.get_session(sid)
-        if not sess:
-            raise HTTPException(status_code=404, detail="conversation not found")
+                               user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+        sess = check_session_access(user, store.get_session(sid))
         try:
             w = cfg.workspace(sess["workspace_id"])
             ws = {"id": w.id, "name": w.name}
@@ -291,13 +507,12 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
     @app.post("/api/conversations/{sid}/messages")
     async def post_message(sid: str, req: MessageRequest,
-                           x_admin_token: str = Header(default="")) -> Dict[str, Any]:
-        require_admin(x_admin_token)
-        sess = store.get_session(sid)
-        if not sess:
-            raise HTTPException(status_code=404, detail="conversation not found")
+                           user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+        sess = check_session_access(user, store.get_session(sid))
         if not (req.content or "").strip():
             raise HTTPException(status_code=400, detail="content 不能为空")
+        if user["role"] != "admin" and req.content.lstrip().startswith("/"):
+            raise HTTPException(status_code=403, detail="普通账号只能进行知识库问答")
         ws = cfg.workspace(sess["workspace_id"])
         history = store.get_all_messages(sid)[-8:]          # 先取历史（不含本次）
         ans = await bot.handle(ws.id, req.content, sid, req.deep, history)
@@ -312,17 +527,19 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
     @app.delete("/api/conversations/{sid}")
     async def delete_conversation(sid: str,
-                                  x_admin_token: str = Header(default="")) -> Dict[str, Any]:
-        require_admin(x_admin_token)
+                                  user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+        check_session_access(user, store.get_session(sid))
         store.delete_session(sid)
-        store.cleanup_empty_sessions(None)     # 删完后仍保证最多一个空对话
+        store.cleanup_empty_sessions(owner_user_id=user["id"])
         return {"ok": True}
 
     @app.post("/ask")
-    async def ask(req: AskRequest, x_admin_token: str = Header(default="")) -> Dict[str, Any]:
-        require_admin(x_admin_token)
-        ans = await bot.handle(req.workspace or "", req.question,
-                               req.session_id or "api", req.deep)
+    async def ask(req: AskRequest, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+        ws = user_workspace(user, req.workspace)
+        if user["role"] != "admin" and (req.question or "").lstrip().startswith("/"):
+            raise HTTPException(status_code=403, detail="普通账号只能进行知识库问答")
+        session_id = f"api:{user['id']}:{req.session_id or 'default'}"
+        ans = await bot.handle(ws.id, req.question, session_id, req.deep)
         # 默认只返回干净结果：答案 + 精简来源
         payload: Dict[str, Any] = {
             "answer": ans.text,

@@ -10,7 +10,11 @@ app:
   log_level: INFO
   data_dir: ./data
   read_only: true                 # 只读：不提供任何修改工程文件的接口
-  admin_token: ${CODELIB_ADMIN_TOKEN:-}
+
+auth:
+  bootstrap_admin:
+    username: ${CODELIB_ADMIN_USERNAME:-}
+    password: ${CODELIB_ADMIN_PASSWORD:-}
 
 default_workspace: gateway
 
@@ -19,7 +23,6 @@ workspaces:
     name: 示例知识库
     # 指向你的代码工程目录（只读）；建议用环境变量或改成本机路径
     path: ${CODELIB_WORKSPACE_PATH:-./sample_workspace}
-    token_budget: 3000
     auto_reindex_on_query: true
     watch_interval_seconds: 0
 
@@ -27,7 +30,6 @@ workspaces:
   # - id: msg_svr
   #   name: 消息服务(tx_msg_svr)
   #   path: ${CODELIB_WORKSPACE2_PATH:-./other_workspace}
-  #   token_budget: 3000
   #   auto_reindex_on_query: true
 
 llm:
@@ -50,9 +52,10 @@ knowledge:
     budget_tokens: 4000
     graph_hops: 1
     query_expand: synonym
+  answer_review: true             # 分析类问题检查相关性和覆盖度，发现明确缺口时修订
   rerank:
-    mode: none                    # none | llm（想更准就改 llm，多一次模型调用）
-    top_n: 6
+    mode: llm                     # none | llm（启用后增加一次相关性重排调用）
+    top_n: 10
 
 channels:
   wecom:

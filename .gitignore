@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+
+# 运行数据（知识库/会话/留痕，含大文件，不入库）
+data/
+*.db
+*.db-wal
+*.db-shm
+logs/
+
+# 密钥与本地配置
+.env
+.env.local
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+.DS_Store

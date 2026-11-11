@@ -1,0 +1,83 @@
+"""评估闭环：把评估结论里可落地的“应召回某文件/符号/目录”抽成 boost 规则。
+
+输入：一次 trace + 它的评估报告（judge_trace 的返回）
+输出：写入知识库 boost 表，下次检索自动加权命中。
+"""
+from __future__ import annotations
+
+import re
+from typing import Any, Dict, List, Optional
+
+from .knowledge.schema import KnowledgeStore
+
+# 从建议文本里抽“文件/目录”引用（含扩展名或目录形态）
+_FILE_RE = re.compile(
+    r"([\w./\\-]+?\.(?:go|py|java|kt|ts|tsx|js|jsx|c|cc|cpp|h|hpp|cs|rs|rb|php|scala|lua|sql|proto|"
+    r"md|markdown|yaml|yml|json|toml|ini|conf|cfg))", re.I)
+_DIR_RE = re.compile(r"\b([a-z_][\w-]*/)\b")
+_IDENT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_.]{2,})`")
+
+# 只认“缺失/应召回/建议补充/未纳入”这类语义，避免把已命中的也加成 boost
+_MISSING_HINTS = ("缺少", "未包含", "未纳入", "应召回", "建议召回", "建议补充", "可补充",
+                  "未被检索", "未被召回", "未出现在检索", "缺失", "补充召回", "应纳入",
+                  "没有召回", "截断")
+
+
+def extract_boost_candidates(report: Dict[str, Any]) -> List[Dict[str, str]]:
+    """从评估报告提取 boost 候选：{kind, pattern, why}。去重保序。"""
+    texts: List[str] = []
+    rule = report.get("rule") or {}
+    for c in rule.get("checks", []) or []:
+        if not c.get("ok"):
+            texts.append(str(c.get("detail", "")))
+            if c.get("hint"):
+                texts.append(str(c["hint"]))
+    llm = report.get("llm") or {}
+    for x in llm.get("harness_improvements", []) or []:
+        texts.append(str(x))
+    for x in llm.get("reasons", []) or []:
+        texts.append(str(x))
+    for x in report.get("improvements", []) or []:
+        texts.append(str(x))
+
+    out: List[Dict[str, str]] = []
+    seen = set()
+
+    def push(kind: str, pattern: str, why: str) -> None:
+        pattern = pattern.strip().strip("`'\"")
+        if not pattern or len(pattern) < 3:
+            return
+        k = (kind, pattern.lower())
+        if k in seen:
+            return
+        seen.add(k)
+        out.append({"kind": kind, "pattern": pattern, "why": why[:200]})
+
+    for t in texts:
+        if not any(h in t for h in _MISSING_HINTS):
+            continue
+        # 文件
+        for m in _FILE_RE.findall(t):
+            push("path", m.replace("\\", "/"), t)
+        # 目录
+        for m in _DIR_RE.findall(t):
+            push("dir", m, t)
+        # 反引号标识符（多为函数/符号名）
+        for m in _IDENT_RE.findall(t):
+            if "." in m and _FILE_RE.match(m):
+                continue
+            push("symbol", m, t)
+    return out
+
+
+def apply_report_to_boosts(kb: KnowledgeStore, workspace: str,
+                           report: Dict[str, Any], source: str = "eval",
+                           max_items: int = 12) -> List[Dict[str, str]]:
+    """把报告里的候选写入 boost（每项 +权重，重复则累加）。返回写入的候选。"""
+    cands = extract_boost_candidates(report)[:max_items]
+    for c in cands:
+        try:
+            kb.add_boost(workspace, c["kind"], c["pattern"], weight=1.5, source=source)
+        except Exception:
+            pass
+    return cands

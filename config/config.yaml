@@ -1,0 +1,72 @@
+# codelib 配置 —— Web 工作台（内网多库 · 只读）
+# 要点：
+#   1) 按需添加多个 workspace（每个 = 一个"库"，对应一个工程目录）
+#   2) app.read_only: true —— 服务不提供任何写工程文件的接口（硬约束）
+#   3) 内网部署：host 0.0.0.0，浏览器访问 http://<内网IP>:8000/
+
+app:
+  host: 0.0.0.0
+  port: 8000
+  log_level: INFO
+  data_dir: ./data
+  read_only: true                 # 只读：不提供任何修改工程文件的接口
+  admin_token: ${CODELIB_ADMIN_TOKEN:-}
+
+default_workspace: gateway
+
+workspaces:
+  - id: gateway
+    name: 示例知识库
+    # 指向你的代码工程目录（只读）；建议用环境变量或改成本机路径
+    path: ${CODELIB_WORKSPACE_PATH:-./sample_workspace}
+    token_budget: 3000
+    auto_reindex_on_query: true
+    watch_interval_seconds: 0
+
+  # 再示例一个库：取消注释即可接入第二个工程（库）
+  # - id: msg_svr
+  #   name: 消息服务(tx_msg_svr)
+  #   path: ${CODELIB_WORKSPACE2_PATH:-./other_workspace}
+  #   token_budget: 3000
+  #   auto_reindex_on_query: true
+
+llm:
+  type: openai_compatible         # openai_compatible | azure_openai | anthropic | gemini
+  base_url: ${CODELIB_LLM_BASE_URL:-http://127.0.0.1:3425/v1}
+  api_key: ${CODELIB_LLM_API_KEY:-}
+  model: ${CODELIB_LLM_MODEL:-workbuddy/glm-5.3}
+  temperature: 0.2
+  max_tokens: 4096                # 推理型模型建议 ≥2048
+  timeout: 90
+
+memory:
+  enabled: true
+  max_items_in_context: 5
+
+knowledge:
+  enabled: true
+  retrieve:
+    top_k: 40
+    budget_tokens: 4000
+    graph_hops: 1
+    query_expand: synonym
+  rerank:
+    mode: none                    # none | llm（想更准就改 llm，多一次模型调用）
+    top_n: 6
+
+channels:
+  wecom:
+    enabled: false
+    corp_id: ${WECOM_CORP_ID:-}
+    agent_id: ${WECOM_AGENT_ID:-}
+    secret: ${WECOM_SECRET:-}
+    token: ${WECOM_TOKEN:-}
+    encoding_aes_key: ${WECOM_AES_KEY:-}
+    webhook_url: ${WECOM_WEBHOOK:-}
+  feishu:
+    enabled: false
+    app_id: ${FEISHU_APP_ID:-}
+    app_secret: ${FEISHU_APP_SECRET:-}
+    verification_token: ${FEISHU_VERIFICATION_TOKEN:-}
+    encrypt_key: ${FEISHU_ENCRYPT_KEY:-}
+    webhook_url: ${FEISHU_WEBHOOK:-}

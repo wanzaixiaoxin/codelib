@@ -1,0 +1,17 @@
+# 代码知识库（P0）依赖：全部进程内库，无容器、无本地模型
+tree-sitter>=0.25
+tree-sitter-python>=0.23
+tree-sitter-go>=0.23
+tree-sitter-java>=0.23
+tree-sitter-typescript>=0.23
+tree-sitter-javascript>=0.23
+tree-sitter-c>=0.23
+tree-sitter-cpp>=0.23
+tree-sitter-c-sharp>=0.23
+tree-sitter-rust>=0.23
+networkx>=3.2
+markitdown>=0.1.9
+pypdf>=4.0
+python-docx>=1.1
+python-pptx>=0.6
+openpyxl>=3.1

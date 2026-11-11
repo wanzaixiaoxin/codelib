@@ -122,11 +122,7 @@ def _source_labels(citations, limit: int = 5):
 
 
 def _format_answer(ans) -> str:
-    txt = ans.text
-    src = _source_labels(ans.citations)
-    if src:
-        txt += "\n\n来源：" + "；".join(src)
-    return txt
+    return ans.text
 
 
 def create_app(config_path: Optional[str] = None) -> FastAPI:

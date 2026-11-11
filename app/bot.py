@@ -13,6 +13,8 @@ from .evidence import evidence_coverage
 from .llm import LLMClient
 from .memory import MemoryManager
 from .models import Answer, Citation
+from .presentation import (has_code_details, response_preferences, strip_code_details,
+                           strip_inline_citations, without_presentation_instructions)
 from .store import Store
 from .trace import Tracer
 from .utils import clip, estimate_tokens
@@ -113,13 +115,16 @@ class BotService:
                 history = self.store.get_messages(session_id, limit=8)
             except Exception:
                 history = []
-        effective_question = text
-        retrieval_query = text
+        preferences = response_preferences(text, history)
+        content_question = without_presentation_instructions(text) if preferences["no_code"] else text
+        effective_question = content_question
+        retrieval_query = content_question
         resolved_by = "none"
         if history:
             heuristic = f"{next((m.get('content','') for m in reversed(history) if m.get('role')=='user'), '')} {text}".strip()
-            retrieval_query = await self._resolve_query(text, history)
-            effective_question = retrieval_query or text
+            resolved = await self._resolve_query(content_question, history)
+            retrieval_query = without_presentation_instructions(resolved) if preferences["no_code"] else resolved
+            effective_question = retrieval_query or content_question
             resolved_by = "heuristic" if retrieval_query.strip() == heuristic.strip() else "llm"
         if deep or self._is_analytical_question(effective_question):
             retrieval_query = await self._plan_retrieval(effective_question)
@@ -185,13 +190,18 @@ class BotService:
         # 记忆不能绕过门槛；短问题也检查，工程名不作为业务证据。
         if coverage < min_cov:
             hint = self._insufficient_answer(effective_question, coverage, citations)
+            hint_citations = citations[:3]
+            if preferences["no_code"]:
+                hint = ("现有知识库中没有足够证据直接回答这个问题。为避免臆测，这里不强行作答。"
+                        "建议补充相关业务术语，或确认所需资料已纳入知识库。")
+                hint_citations = []
             self._record(ws, session_id, text, hint, [], cacheable=False)
             if tracer:
                 tracer.event("gate", {"coverage": round(coverage, 3), "min_coverage": min_cov,
                                       "action": "insufficient_evidence"})
-                tracer.answer(hint, citations[:3], False, tracer.elapsed_ms())
+                tracer.answer(hint, hint_citations, False, tracer.elapsed_ms())
             return Answer(text=hint, workspace=ws.id, trace_id=tracer.trace_id if tracer else "",
-                          citations=citations[:3], changes=(index_result or {}),
+                          citations=hint_citations, changes=(index_result or {}),
                           used_context_tokens=used,
                           full_corpus_tokens=self.store.sum_full_tokens(ws.id),
                           elapsed_ms=int((time.time() - t0) * 1000))
@@ -213,11 +223,17 @@ class BotService:
                                           score=float(c.get("score", 0))))
                 except Exception:
                     pass
+            cached_answer = mem_answer["answer"]
+            if preferences["no_code"]:
+                cached_answer = await self._enforce_answer_preferences(cached_answer, preferences)
+                old_cites = []
+            elif not preferences["inline_citations"]:
+                cached_answer = strip_inline_citations(cached_answer)
             if tracer:
                 tracer.event("cache", {"hit": True, "why": "same_question_in_memory",
                                        "reused_sources": len(old_cites)})
-                tracer.answer(mem_answer["answer"], old_cites, False, tracer.elapsed_ms())
-            return Answer(text=mem_answer["answer"], workspace=ws.id,
+                tracer.answer(cached_answer, old_cites, False, tracer.elapsed_ms())
+            return Answer(text=cached_answer, workspace=ws.id,
                           trace_id=tracer.trace_id if tracer else "",
                           citations=old_cites, changes=(index_result or {}),
                           memory_hits=mem_hits[:3],
@@ -226,7 +242,10 @@ class BotService:
                           elapsed_ms=int((time.time() - t0) * 1000))
 
         if self.llm.available:
-            user_prompt = self._build_prompt(ws, effective_question, context, mem_block, history)
+            prompt_history = history
+            if preferences["no_code"]:
+                prompt_history = [*(history or []), {"role": "user", "content": text}]
+            user_prompt = self._build_prompt(ws, effective_question, context, mem_block, prompt_history)
             if tracer:
                 tracer.prompt(SYSTEM_PROMPT, user_prompt)
             _llm_t0 = time.time()
@@ -271,14 +290,20 @@ class BotService:
             if tracer:
                 tracer.llm_result(False, answer_text, None, {}, 0, "llm 未配置，走检索摘要")
 
-        if llm_used:
-            citations = self._filter_used_citations(answer_text, citations)
+        answer_text = await self._enforce_answer_preferences(answer_text, preferences)
+        if not preferences["inline_citations"]:
+            answer_text = strip_inline_citations(answer_text)
+        if preferences["no_code"]:
+            citations = []
+        elif llm_used:
+            citations = self._filter_used_citations(
+                answer_text, citations, allow_fallback=not preferences["inline_citations"])
 
         cited_in_answer = any(c.path and c.path in answer_text for c in citations)
         self._record(ws, session_id, text, answer_text,
                      [c.to_dict() for c in citations],
-                     cacheable=(llm_used and len(answer_text) >= 120
-                                and bool(citations) and cited_in_answer))
+                     cacheable=(llm_used and len(answer_text) >= 120 and bool(citations)
+                                and (cited_in_answer or not preferences["inline_citations"])))
         if tracer:
             tracer.answer(answer_text, citations, llm_used, tracer.elapsed_ms())
 
@@ -322,8 +347,7 @@ class BotService:
                                       "未配置大模型", "以上为检索摘要")):
                 continue
             old = qa.get("citations") or []
-            if not old or not current_citations or not any(
-                    str(c.get("path", "")) in ans for c in old if isinstance(c, dict)):
+            if not old or not current_citations:
                 continue
             still_supported = False
             for c in old:
@@ -612,6 +636,20 @@ class BotService:
                 return line
         return heuristic
 
+    async def _enforce_answer_preferences(self, text: str, preferences: Dict[str, bool]) -> str:
+        if not preferences.get("no_code") or not has_code_details(text):
+            return text
+        if self.llm.available:
+            system = (
+                "你是自然语言说明编辑。把内容改写为面向业务或管理读者的回答。"
+                "禁止代码块、伪代码、函数名、类名、字段名、变量名、文件名、路径、行号、接口地址和代码符号。"
+                "只保留结论、业务规则、处理过程、风险和建议；不得新增事实。"
+            )
+            rewritten = await self.llm.chat(system, f"请改写以下内容：\n{text[:8000]}")
+            if rewritten and not str(rewritten).startswith("__LLM_ERROR__"):
+                return strip_code_details(str(rewritten))
+        return strip_code_details(text)
+
     # ---------------- 组装提示词 ----------------
     def _build_prompt(self, ws: WorkspaceConfig, question: str,
                       context: str, mem_block: str,
@@ -638,24 +676,35 @@ class BotService:
             parts += [
                 "这是分析类问题。先直接回答核心结论，再按问题需要说明涉及组件及职责、调用/数据流、"
                 "关键原因与因果关系、边界或失败路径；逐项回应用户明确提出的子问题。",
-                "把代码中可直接确认的事实与推断分开；每个关键事实就近引用来源（path:line-line）。",
+                "把代码中可直接确认的事实与推断分开，但不要为了展示证据而堆砌文件名或代码符号。",
                 "使用清晰的小标题或分点组织内容，充分解释但避免重复，不受固定字数上限限制。",
                 "若证据只覆盖部分问题，先回答有据可答的部分，再明确列出缺失证据；不得靠历史记忆或猜测补齐。",
             ]
         else:
             parts += [
                 "先给直接结论，再用简洁说明交代原因或操作路径；回答应覆盖用户问题，不要只复述检索片段。",
-                "关键事实就近引用来源（path:line-line）；证据不足时说明具体缺口，不要硬凑。",
+                "证据用于保证答案可靠；证据不足时说明具体缺口，不要硬凑。",
             ]
-        parts += [
-            "候选片段是证据而非答案清单；不要写“依据1/2/3”，不要复制大段代码，也不要输出片段编号。",
-            "只引用候选中真实出现的文件与行号；没有证据支持的推断要明确标为推断。",
-        ]
+        preferences = response_preferences(question, history)
+        if preferences["no_code"]:
+            parts += [
+                "用户明确要求不展示代码细节：只能使用自然语言说明业务结论、规则和步骤。",
+                "禁止代码块、伪代码、函数名、类名、字段名、变量名、文件名、路径、行号、接口地址及反引号符号。",
+            ]
+        elif preferences["inline_citations"]:
+            parts += ["用户需要证据定位：只给关键结论配少量真实 path:line 引用，最多3处，不要罗列全部候选。"]
+        else:
+            parts += ["默认不在正文插入文件路径、行号或来源清单，也不逐条罗列代码符号；直接输出易读的结论与说明。"]
+        if not preferences["detailed"] and not self._is_analytical_question(question):
+            parts += ["没有详细分析要求时保持简洁，优先一到三段自然语言或少量要点。"]
+        parts += ["候选只用于内部核实，不要输出片段编号；没有证据支持的推断要明确标为推断。"]
         return "\n".join(parts)
 
     def _filter_used_citations(self, text: str, citations: List[Citation],
-                               limit: int = 5) -> List[Citation]:
+                               limit: int = 3, allow_fallback: bool = False) -> List[Citation]:
         used = [c for c in citations if c.path and c.path in text]
+        if not used and allow_fallback:
+            used = list(citations)
         unique = []
         seen = set()
         for c in used:
@@ -668,11 +717,9 @@ class BotService:
     # ---------------- 无 LLM 降级 ----------------
     def _extractive_answer(self, question: str, context: str,
                            citations: List[Citation]) -> str:
-        lines = [f"针对「{question}」，在当前工程中匹配到 {len(citations)} 处相关内容："]
-        for i, c in enumerate(citations[:6], start=1):
-            lines.append(f"{i}. {c.path}:{c.start_line}-{c.end_line}")
+        lines = [f"针对「{question}」，在当前知识库中匹配到 {len(citations)} 条相关内容。"]
         if context:
-            lines += ["", "最相关片段：", clip(context, 700)]
+            lines += ["", "最相关内容摘录：", clip(context, 500)]
         lines += ["", "（未配置大模型，以上为检索摘要；配置 llm 后可生成自然语言答案。）"]
         return "\n".join(lines)
 

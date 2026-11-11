@@ -129,6 +129,8 @@ curl -s -b cookies.txt http://127.0.0.1:8000/ask \
 - `workspace` 可省略（单目录时）；传 `id` / `name` / 目录名都能匹配。
 - 想看引用评分、记忆命中、token 用量等诊断信息，请求体加 `"debug": true`，诊断信息在 `debug` 字段里。
 - 微信 / 飞书里直接用自然语言发消息即可，不用关心这些字段。
+- 默认正文以自然语言结论为主，不堆砌路径、行号和来源清单；网页中的参考资料默认折叠，渠道不再额外追加来源。
+- 需要定位时可说「给出行号来源」，正文最多保留少量关键引用；说「不要代码、函数名和字段名」时会改用纯自然语言，并在当前对话的后续追问中延续该偏好。
 
 > 程序调用可复用登录 cookie，或通过 `Authorization: Bearer <session-token>` 传递 API 会话。密码只保存 PBKDF2 哈希；初始管理员只在数据库首次创建时从环境变量引导。普通账号只能看到和提问管理员已分配的知识库，并且只能查看自己的对话；停用或重置密码会立即注销该账号现有会话。
 
@@ -412,6 +414,7 @@ python tests/llm_test.py       # 大模型配置与请求构造（不联网）
 python tests/llm_live_test.py  # 本地假大模型端到端 + 失败降级
 python tests/core_quality_test.py # 长切片 / 文件摘要 / 子问题覆盖 / 多跳与断言接地
 python tests/admin_workspace_test.py # 知识库生命周期 / 对话管理 / 重启持久化 / 越权拦截
+python tests/presentation_test.py # 默认简洁回答 / 引用偏好 / 禁止代码细节 / 多轮偏好
 ```
 
 以上均已通过。

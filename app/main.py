@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from .bot import BotService
 from .channels import FeishuChannel, WeComChannel
 from .config import AppConfig
+from .im import IMConversation
 from .config import WorkspaceConfig
 from .memory import MemoryManager
 from .store import Store
@@ -155,6 +156,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     bot = BotService(cfg, store, MemoryManager(store, cfg.memory))
     wecom = WeComChannel(cfg.channel("wecom"))
     feishu = FeishuChannel(cfg.channel("feishu"))
+    im = IMConversation(cfg, store)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -668,8 +670,16 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         msg = wecom.parse_message(body, dict(request.query_params))
         if msg is None:
             return PlainTextResponse("success")
-        ans = await bot.handle(msg.workspace_id, msg.text, msg.session_id)
-        reply = _format_answer(ans)
+        # 先走 IM 交互（选库/菜单），再决定是否提问
+        decision = im.handle("wecom", msg.user_id, msg.text)
+        if decision["action"] in ("menu", "need_select", "selected"):
+            reply = decision["reply"]
+            ans = None
+        else:
+            # 会话按“用户+库”隔离，避免切换库后串上下文
+            sid = f"wecom:{msg.user_id}:{decision['workspace_id']}"
+            ans = await bot.handle(decision["workspace_id"], msg.text, sid)
+            reply = _format_answer(ans)
         if wecom.cfg.get("corp_id") and wecom.cfg.get("secret") and wecom.cfg.get("agent_id"):
             try:
                 if await wecom.send_text(msg.user_id, reply):
@@ -694,8 +704,13 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
         async def _process():
             try:
-                ans = await bot.handle(msg.workspace_id, msg.text, msg.session_id)
-                reply = _format_answer(ans)
+                decision = im.handle("feishu", msg.user_id, msg.text)
+                if decision["action"] in ("menu", "need_select", "selected"):
+                    reply = decision["reply"]
+                else:
+                    sid = f"feishu:{msg.user_id}:{decision['workspace_id']}"
+                    ans = await bot.handle(decision["workspace_id"], msg.text, sid)
+                    reply = _format_answer(ans)
                 ok = await feishu.reply_message(msg.message_id, reply)
                 if not ok and feishu.cfg.get("webhook_url"):
                     await feishu.send_webhook(reply)

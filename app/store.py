@@ -129,6 +129,13 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at);
+CREATE TABLE IF NOT EXISTS im_binding (
+    channel      TEXT NOT NULL,     -- wecom | feishu | ...
+    user_id      TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,     -- 该用户当前选中的知识库
+    updated_at   REAL NOT NULL,
+    PRIMARY KEY(channel, user_id)
+);
 CREATE TABLE IF NOT EXISTS user_workspace_access (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     workspace_id TEXT NOT NULL,
@@ -214,6 +221,38 @@ class Store:
         if count:
             return None
         return self.create_user(username, password, "admin")
+
+    # ---------------- IM 用户 ↔ 知识库绑定 ----------------
+    def set_im_binding(self, channel: str, user_id: str, workspace_id: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                "INSERT INTO im_binding(channel,user_id,workspace_id,updated_at) VALUES(?,?,?,?) "
+                "ON CONFLICT(channel,user_id) DO UPDATE SET workspace_id=excluded.workspace_id,"
+                "updated_at=excluded.updated_at",
+                (channel, str(user_id), str(workspace_id), time.time()))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_im_binding(self, channel: str, user_id: str) -> Optional[str]:
+        conn = self._connect()
+        try:
+            r = conn.execute(
+                "SELECT workspace_id FROM im_binding WHERE channel=? AND user_id=?",
+                (channel, str(user_id))).fetchone()
+            return r["workspace_id"] if r else None
+        finally:
+            conn.close()
+
+    def clear_im_binding(self, channel: str, user_id: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM im_binding WHERE channel=? AND user_id=?",
+                         (channel, str(user_id)))
+            conn.commit()
+        finally:
+            conn.close()
 
     def authenticate_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         conn = self._connect()

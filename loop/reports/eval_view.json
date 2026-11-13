@@ -1,0 +1,1049 @@
+{
+  "generated_at": "2026-11-12 17:06:26",
+  "db": "loop\\runs\\l0_merged\\codelib.db",
+  "cases": "loop\\frozen\\failure_cases.yaml",
+  "sha": "4e4260dd6965f80a09dff7c4af15ce4d646166448258a138b9654141c290b462",
+  "coverage": {
+    "expected_paths": 18,
+    "expected_answer_points": 12,
+    "failure_layer": 24
+  },
+  "mode": "混合（部分字段已标注）",
+  "summary": {
+    "count": 24,
+    "labeled": 23,
+    "intent_avg": 0.785,
+    "retrieval_avg": 0.5,
+    "presentation_avg": 0.477,
+    "layer_distribution": {
+      "retrieval": 12,
+      "ok": 12
+    },
+    "cases_without_trace": 0
+  },
+  "rows": [
+    {
+      "task_id": "fc_001",
+      "question": "券补全机制",
+      "workspace": "nlp",
+      "labeled": true,
+      "split": "train",
+      "priority": 11,
+      "intent_score": 0.0,
+      "retrieval_score": 1.0,
+      "presentation_score": 0.0,
+      "attributed_layer": "retrieval",
+      "evidence_reasons": [
+        "证据门槛拦截",
+        "评审55.0分/建议补召回"
+      ],
+      "signals": {
+        "repeat_count": 3,
+        "trace_count": 3,
+        "data_coverage": {
+          "intent": false,
+          "retrieval": true,
+          "answer": false
+        },
+        "audit_score": 55.0,
+        "retrieval_query": "pri_nlp_worker_svr 工程中现券场景的券信息补全机制是如何实现的？",
+        "topic_lost_terms": [],
+        "coverage": null,
+        "missing": [],
+        "gate_blocked": true,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/券信息补全与校验逻辑.md"
+        ],
+        "answer_chars": 238,
+        "llm_ok": false,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": false
+      }
+    },
+    {
+      "task_id": "fc_002",
+      "question": "资金和现券上下文管理有什么主要的区别",
+      "workspace": "nlp",
+      "labeled": true,
+      "split": "train",
+      "priority": 4,
+      "intent_score": 0.667,
+      "retrieval_score": 0.0,
+      "presentation_score": 0.0,
+      "attributed_layer": "retrieval",
+      "evidence_reasons": [
+        "覆盖0.67/缺文管理,区别"
+      ],
+      "signals": {
+        "repeat_count": 0,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": false
+        },
+        "audit_score": null,
+        "retrieval_query": "资金业务（回购/大行资金）与现券业务的会话上下文管理机制有哪些主要区别？\n回购和大行资金业务的会话上下文管理机制实现\n现券业务的会话上下文管理机制实现\n资金业务与现券业务会话上下文管理的差异对比（状态存储、上下文隔离、续期或失效逻辑）",
+        "topic_lost_terms": [],
+        "coverage": 0.667,
+        "missing": [
+          "文管理",
+          "区别"
+        ],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/私域NLP二次处理规则.md",
+          "docs/03-数据与缓存/Redis键说明.md",
+          "docs/01-业务与架构/NLP前置-业务概览.md"
+        ],
+        "answer_chars": 0,
+        "llm_ok": false,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": false
+      }
+    },
+    {
+      "task_id": "fc_003",
+      "question": "你做什么的",
+      "workspace": "tdx_msg_bus_svr",
+      "labeled": true,
+      "split": "train",
+      "priority": 4,
+      "intent_score": 1.0,
+      "retrieval_score": 0.0,
+      "presentation_score": null,
+      "attributed_layer": "retrieval",
+      "evidence_reasons": [
+        "证据门槛拦截",
+        "覆盖0.00/缺你做"
+      ],
+      "signals": {
+        "repeat_count": 5,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": false
+        },
+        "audit_score": null,
+        "retrieval_query": "你做什么的",
+        "topic_lost_terms": [],
+        "coverage": 0.0,
+        "missing": [
+          "你做"
+        ],
+        "gate_blocked": true,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/消息网关-业务概览.md",
+          "docs/05-部署与运维/运维DEV-OPS手册.md"
+        ],
+        "answer_chars": 201,
+        "llm_ok": false,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": false
+      }
+    },
+    {
+      "task_id": "fc_004",
+      "question": "ideal渠道和qt渠道的接口实现是一致的吗",
+      "workspace": "tdx_msg_bus_svr",
+      "labeled": true,
+      "split": "holdout",
+      "priority": 4,
+      "intent_score": 1.0,
+      "retrieval_score": 0.0,
+      "presentation_score": 1.0,
+      "attributed_layer": "retrieval",
+      "evidence_reasons": [
+        "覆盖0.75/缺一致"
+      ],
+      "signals": {
+        "repeat_count": 5,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "ideal渠道和qt渠道的接口实现是一致的吗",
+        "topic_lost_terms": [],
+        "coverage": 0.75,
+        "missing": [
+          "一致"
+        ],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/消息网关设计与业务介绍.md",
+          "docs/01-业务与架构/消息网关-业务概览.md",
+          "docs/02-接口/接口文档.md",
+          "docs/90-方案与历史/按业务类型功能梳理.md",
+          "proto/cross_channel_msg.go",
+          "docs/03-数据与缓存/通讯录查询方案.md"
+        ],
+        "answer_chars": 778,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_005",
+      "question": "消息服务是如何启动的？入口在哪里？",
+      "workspace": "tdx_msg_bus_svr",
+      "labeled": true,
+      "split": "train",
+      "priority": 4,
+      "intent_score": 1.0,
+      "retrieval_score": 0.0,
+      "presentation_score": 1.0,
+      "attributed_layer": "ok",
+      "evidence_reasons": [],
+      "signals": {
+        "repeat_count": 5,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "消息服务是如何启动的？入口在哪里？",
+        "topic_lost_terms": [],
+        "coverage": 1.0,
+        "missing": [],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "main.go",
+          "docs/05-部署与运维/运维DEV-OPS手册.md",
+          "docs/05-部署与运维/日志归档与压缩.md",
+          "docs/03-数据与缓存/最近联系人数据拉取与内存索引.md",
+          "docs/04-消息与外部集成/Kafka_Topic可配置说明.md",
+          "relation_cache/cache_event.go"
+        ],
+        "answer_chars": 1210,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_006",
+      "question": "消息网关如何路由消息？",
+      "workspace": "sample",
+      "labeled": true,
+      "split": "train",
+      "priority": 4,
+      "intent_score": 1.0,
+      "retrieval_score": 1.0,
+      "presentation_score": 1.0,
+      "attributed_layer": "ok",
+      "evidence_reasons": [],
+      "signals": {
+        "repeat_count": 20,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "消息网关如何路由消息？",
+        "topic_lost_terms": [],
+        "coverage": 1.0,
+        "missing": [],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "src/gateway.py",
+          "docs/api.md",
+          "docs/architecture.md",
+          "README.md",
+          "src/handlers.py",
+          "src/storage.py"
+        ],
+        "answer_chars": 916,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_007",
+      "question": "MemoryStore 怎么检索？",
+      "workspace": "sample",
+      "labeled": true,
+      "split": "train",
+      "priority": 4,
+      "intent_score": 1.0,
+      "retrieval_score": 0.5,
+      "presentation_score": 0.25,
+      "attributed_layer": "ok",
+      "evidence_reasons": [],
+      "signals": {
+        "repeat_count": 6,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "MemoryStore 怎么检索？",
+        "topic_lost_terms": [],
+        "coverage": 1.0,
+        "missing": [],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "src/storage.py",
+          "docs/api.md",
+          "src/handlers.py",
+          "docs/architecture.md",
+          "src/gateway.py"
+        ],
+        "answer_chars": 557,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_008",
+      "question": "你是只分析的文档，还是分析了代码",
+      "workspace": "nlp",
+      "labeled": true,
+      "split": "holdout",
+      "priority": 3,
+      "intent_score": 0.667,
+      "retrieval_score": 0.0,
+      "presentation_score": null,
+      "attributed_layer": "retrieval",
+      "evidence_reasons": [
+        "覆盖0.71/缺回答,分析得到"
+      ],
+      "signals": {
+        "repeat_count": 0,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": false
+        },
+        "audit_score": null,
+        "retrieval_query": "你的回答是仅基于文档（BUSINESS.md、AGENTS.md 等）分析得到的，还是也实际分析了代码库中的代码实现？\nBUSINESS.md 和 AGENTS.md 等文档文件在代码库中的位置及其描述的业务流程与约定\nBUSINESS.md 中描述的业务规则在代码实现中的对应位置（相关模块、函数或服务）\nAGENTS.md 中的约定在实际代码结构中的落实情况，以及文档与代码实现可能存在不一致的地方",
+        "topic_lost_terms": [],
+        "coverage": 0.714,
+        "missing": [
+          "回答",
+          "分析得到"
+        ],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "AGENTS.md",
+          "BUSINESS.md",
+          ".workbuddy/memory/2026-10-19.md",
+          "docs/05-部署与运维/部署与环境依赖.md",
+          "docs/02-接口/接口文档.md"
+        ],
+        "answer_chars": 0,
+        "llm_ok": false,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": false
+      }
+    },
+    {
+      "task_id": "fc_009",
+      "question": "总一下当前资金上下文",
+      "workspace": "nlp",
+      "labeled": true,
+      "split": "train",
+      "priority": 3,
+      "intent_score": 0.0,
+      "retrieval_score": 0.5,
+      "presentation_score": 0.0,
+      "attributed_layer": "retrieval",
+      "evidence_reasons": [
+        "覆盖0.62/缺总结一,文内容",
+        "评审72.0分/建议补召回"
+      ],
+      "signals": {
+        "repeat_count": 2,
+        "trace_count": 2,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": 72.0,
+        "retrieval_query": "请总结一下当前资金业务场景下的会话上下文内容（包括已识别的资金指令、方向、期限、价格等要素）及其处理机制。\n资金业务会话上下文管理 上下文要素识别 资金指令 方向 期限 价格 要素提取\n会话上下文处理机制 指令解析流程 上下文继承与更新 多轮会话中指令要素的补全与确认逻辑\n资金业务指令识别失败或要素缺失时的处理路径 回退 澄清 配置约束",
+        "topic_lost_terms": [],
+        "coverage": 0.625,
+        "missing": [
+          "总结一",
+          "文内容",
+          "其处理"
+        ],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/NLP前置-业务概览.md",
+          "docs/01-业务与架构/私域NLP二次处理规则.md",
+          "docs/01-业务与架构/指令类型场景判断方法.md",
+          "docs/01-业务与架构/券信息补全与校验逻辑.md"
+        ],
+        "answer_chars": 3905,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_010",
+      "question": "消息网关收到上行消息后是怎么处理的？",
+      "workspace": "tdx_msg_bus_svr",
+      "labeled": false,
+      "split": "train",
+      "priority": 3,
+      "intent_score": 1.0,
+      "retrieval_score": 1.0,
+      "presentation_score": 1.0,
+      "attributed_layer": "ok",
+      "evidence_reasons": [],
+      "signals": {
+        "repeat_count": 2,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "消息网关收到上行消息后是怎么处理的？",
+        "topic_lost_terms": [],
+        "coverage": 1.0,
+        "missing": [],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/消息网关-业务概览.md",
+          "docs/01-业务与架构/消息网关设计与业务介绍.md",
+          ".workbuddy/memory/MEMORY.md",
+          "docs/04-消息与外部集成/chat_gateway_nlp_raw_msg_ntf_interface.md"
+        ],
+        "answer_chars": 1054,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_011",
+      "question": "当前支持哪些渠道",
+      "workspace": "msg_gateway",
+      "labeled": true,
+      "split": "train",
+      "priority": 3,
+      "intent_score": 1.0,
+      "retrieval_score": 1.0,
+      "presentation_score": 1.0,
+      "attributed_layer": "ok",
+      "evidence_reasons": [],
+      "signals": {
+        "repeat_count": 2,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "当前支持哪些渠道",
+        "topic_lost_terms": [],
+        "coverage": 1.0,
+        "missing": [],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/90-方案与历史/跨渠道批量发消息方案.md",
+          "proto/cross_channel_msg.go",
+          "docs/02-接口/跨渠道批量发消息接口文档.md",
+          "docs/02-接口/批量查询通讯录接口文档.md",
+          "docs/01-业务与架构/消息网关-业务概览.md",
+          "docs/01-业务与架构/消息网关设计与业务介绍.md"
+        ],
+        "answer_chars": 606,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_012",
+      "question": "我希望再回答结果中不要包含太多的代码，我不关心代码",
+      "workspace": "nlp",
+      "labeled": true,
+      "split": "holdout",
+      "priority": 2,
+      "intent_score": 0.0,
+      "retrieval_score": 0.0,
+      "presentation_score": 0.0,
+      "attributed_layer": "retrieval",
+      "evidence_reasons": [
+        "覆盖0.90/缺素构成",
+        "评审85.0分/建议补召回"
+      ],
+      "signals": {
+        "repeat_count": 1,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": 85.0,
+        "retrieval_query": "请总结资金业务（回购 repo 及大行资金 lend）场景下会话上下文的要素构成、生成、复用与清理机制，要求用纯文字描述，不要包含代码内容。\n回购 repo 业务场景 会话上下文 要素构成 生成 复用 清理 机制\n大行资金 lend 业务场景 会话上下文 生成 复用 清理 机制\n资金业务 会话上下文 初始化 生命周期 失效清理 复用逻辑",
+        "topic_lost_terms": [],
+        "coverage": 0.9,
+        "missing": [
+          "素构成"
+        ],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/私域NLP二次处理规则.md",
+          "docs/02-接口/接口文档.md",
+          "docs/01-业务与架构/NLP前置-业务概览.md",
+          "docs/01-业务与架构/Repo转Lend转换逻辑.md"
+        ],
+        "answer_chars": 3358,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_013",
+      "question": "它的入口在哪？",
+      "workspace": "tdx_msg_bus_svr",
+      "labeled": true,
+      "split": "train",
+      "priority": 2,
+      "intent_score": 1.0,
+      "retrieval_score": 1.0,
+      "presentation_score": 1.0,
+      "attributed_layer": "ok",
+      "evidence_reasons": [],
+      "signals": {
+        "repeat_count": 1,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "它的入口在哪？",
+        "topic_lost_terms": [],
+        "coverage": 1.0,
+        "missing": [],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "main.go",
+          "logging/logger.go",
+          "docs/03-数据与缓存/最近联系人数据拉取与内存索引.md",
+          "docs/02-接口/接口文档.md",
+          "docs/README.md",
+          "docs/05-部署与运维/日志归档与压缩.md"
+        ],
+        "answer_chars": 820,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_014",
+      "question": "消息网关收到一条上行消息后，是怎么一步步处理的？",
+      "workspace": "tdx_msg_bus_svr",
+      "labeled": true,
+      "split": "train",
+      "priority": 2,
+      "intent_score": 1.0,
+      "retrieval_score": 0.0,
+      "presentation_score": 1.0,
+      "attributed_layer": "retrieval",
+      "evidence_reasons": [
+        "覆盖0.67/缺一步步处理"
+      ],
+      "signals": {
+        "repeat_count": 1,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "消息网关收到一条上行消息后，是怎么一步步处理的？",
+        "topic_lost_terms": [],
+        "coverage": 0.667,
+        "missing": [
+          "一步步处理"
+        ],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/消息网关-业务概览.md",
+          "docs/01-业务与架构/消息网关设计与业务介绍.md",
+          "docs/04-消息与外部集成/chat_gateway_nlp_raw_msg_ntf_interface.md"
+        ],
+        "answer_chars": 821,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_015",
+      "question": "这个工程是做什么的，主要解决什么问题",
+      "workspace": "tdx_msg_bus_svr",
+      "labeled": true,
+      "split": "train",
+      "priority": 2,
+      "intent_score": 1.0,
+      "retrieval_score": 1.0,
+      "presentation_score": 1.0,
+      "attributed_layer": "ok",
+      "evidence_reasons": [],
+      "signals": {
+        "repeat_count": 1,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "这个工程是做什么的，主要解决什么问题",
+        "topic_lost_terms": [],
+        "coverage": 1.0,
+        "missing": [],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/消息网关-业务概览.md",
+          "docs/05-部署与运维/运维DEV-OPS手册.md",
+          "docs/README.md",
+          "docs/02-接口/接口文档.md",
+          "main.go",
+          "redis_client/redis_client.go"
+        ],
+        "answer_chars": 763,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": false
+      }
+    },
+    {
+      "task_id": "fc_016",
+      "question": "你支持哪些消息渠道",
+      "workspace": "tdx_msg_bus_svr",
+      "labeled": true,
+      "split": "holdout",
+      "priority": 2,
+      "intent_score": 1.0,
+      "retrieval_score": 1.0,
+      "presentation_score": 1.0,
+      "attributed_layer": "ok",
+      "evidence_reasons": [],
+      "signals": {
+        "repeat_count": 1,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "你支持哪些消息渠道",
+        "topic_lost_terms": [],
+        "coverage": 1.0,
+        "missing": [],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/90-方案与历史/跨渠道批量发消息方案.md",
+          "proto/cross_channel_msg.go",
+          "docs/02-接口/跨渠道批量发消息接口文档.md",
+          "docs/01-业务与架构/消息网关设计与业务介绍.md",
+          ".workbuddy/memory/2026-07-14.md",
+          "docs/01-业务与架构/消息网关-业务概览.md"
+        ],
+        "answer_chars": 578,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_017",
+      "question": "消息网关是怎么路由的",
+      "workspace": "msg_gateway",
+      "labeled": true,
+      "split": "train",
+      "priority": 2,
+      "intent_score": 1.0,
+      "retrieval_score": 0.75,
+      "presentation_score": 1.0,
+      "attributed_layer": "ok",
+      "evidence_reasons": [],
+      "signals": {
+        "repeat_count": 1,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "消息网关是怎么路由的",
+        "topic_lost_terms": [],
+        "coverage": 1.0,
+        "missing": [],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/消息网关-业务概览.md",
+          "docs/01-业务与架构/消息网关设计与业务介绍.md",
+          "docs/04-消息与外部集成/IDeal WebSocket连接归属与内部转发设计.md"
+        ],
+        "answer_chars": 979,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_018",
+      "question": "目前资金和现券业务有哪些公用的部分",
+      "workspace": "nlp",
+      "labeled": true,
+      "split": "train",
+      "priority": 1,
+      "intent_score": 0.5,
+      "retrieval_score": 0.25,
+      "presentation_score": 0.0,
+      "attributed_layer": "retrieval",
+      "evidence_reasons": [
+        "覆盖0.88/缺部分"
+      ],
+      "signals": {
+        "repeat_count": 1,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "当前系统中资金业务和现券业务有哪些共用或复用的部分（代码、流程、消息结构、服务等）？\n资金业务与现券业务的共用代码、公共模块、基础组件或工具类（如账户、清算、结算、风控等复用部分）的实现与位置\n资金业务与现券业务共用的消息结构、报文协议、流程步骤或状态机（如下单、成交、清算结算流程中的复用逻辑）\n资金业务与现券业务共同调用的服务、接口、配置项，以及相关调用方/被调用方和失败处理路径",
+        "topic_lost_terms": [],
+        "coverage": 0.875,
+        "missing": [
+          "部分"
+        ],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/NLP前置-业务概览.md",
+          "docs/README.md",
+          "docs/01-业务与架构/指令类型场景判断方法.md",
+          "AGENTS.md"
+        ],
+        "answer_chars": 2182,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_019",
+      "question": "当前的单聊的聊天顺序是否会顺序到达下游kafka",
+      "workspace": "nlp",
+      "labeled": true,
+      "split": "train",
+      "priority": 1,
+      "intent_score": 1.0,
+      "retrieval_score": 0.0,
+      "presentation_score": 0.0,
+      "attributed_layer": "retrieval",
+      "evidence_reasons": [
+        "覆盖0.86/缺顺序性到达"
+      ],
+      "signals": {
+        "repeat_count": 1,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "单聊（IDEAL 单聊）的消息按聊天顺序消费处理后，发送到下游 Kafka 时是否能保证消息的顺序性到达",
+        "topic_lost_terms": [],
+        "coverage": 0.857,
+        "missing": [
+          "顺序性到达"
+        ],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "BUSINESS.md",
+          "AGENTS.md",
+          "docs/01-业务与架构/NLP前置-业务概览.md",
+          ".workbuddy/memory/MEMORY.md"
+        ],
+        "answer_chars": 922,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_020",
+      "question": "当前系统和外部有那些交互",
+      "workspace": "nlp",
+      "labeled": true,
+      "split": "holdout",
+      "priority": 1,
+      "intent_score": 1.0,
+      "retrieval_score": 0.0,
+      "presentation_score": 0.0,
+      "attributed_layer": "retrieval",
+      "evidence_reasons": [
+        "覆盖0.67/缺交互"
+      ],
+      "signals": {
+        "repeat_count": 1,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "当前系统和外部有哪些交互",
+        "topic_lost_terms": [],
+        "coverage": 0.667,
+        "missing": [
+          "交互"
+        ],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "AGENTS.md",
+          "BUSINESS.md",
+          "docs/01-业务与架构/NLP前置-业务概览.md",
+          "docs/02-接口/接口文档.md"
+        ],
+        "answer_chars": 2457,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_021",
+      "question": "详细介绍一下现券的上下文管理",
+      "workspace": "nlp",
+      "labeled": true,
+      "split": "train",
+      "priority": 1,
+      "intent_score": 1.0,
+      "retrieval_score": 1.0,
+      "presentation_score": 0.25,
+      "attributed_layer": "ok",
+      "evidence_reasons": [],
+      "signals": {
+        "repeat_count": 1,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": false,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "在 pri_nlp_worker_svr 工程中，现券场景的会话上下文管理具体是如何实现的？请详细介绍其处理流程和相关代码。",
+        "topic_lost_terms": [],
+        "coverage": null,
+        "missing": [],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/私域NLP二次处理规则.md",
+          "docs/01-业务与架构/现券意向指令处理逻辑.md",
+          "BUSINESS.md",
+          "docs/03-数据与缓存/Redis键说明.md",
+          "docs/90-方案与历史/现券双边报价RoundID与Done场景验收.md"
+        ],
+        "answer_chars": 3237,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_022",
+      "question": "价格补全机制",
+      "workspace": "nlp",
+      "labeled": true,
+      "split": "train",
+      "priority": 0,
+      "intent_score": 0.0,
+      "retrieval_score": 0.0,
+      "presentation_score": 0.0,
+      "attributed_layer": "ok",
+      "evidence_reasons": [],
+      "signals": {
+        "repeat_count": 1,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "现券场景下价格字段的补全机制是如何实现的？",
+        "topic_lost_terms": [],
+        "coverage": 1.0,
+        "missing": [],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/NLP前置-业务概览.md",
+          "docs/01-业务与架构/现券意向指令处理逻辑.md",
+          "docs/01-业务与架构/私域NLP二次处理规则.md",
+          "BUSINESS.md",
+          "docs/90-方案与历史/现券双边报价RoundID与Done场景验收.md"
+        ],
+        "answer_chars": 2910,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_023",
+      "question": "万得简称如何补全",
+      "workspace": "nlp",
+      "labeled": true,
+      "split": "train",
+      "priority": 0,
+      "intent_score": 1.0,
+      "retrieval_score": 1.0,
+      "presentation_score": 0.0,
+      "attributed_layer": "ok",
+      "evidence_reasons": [],
+      "signals": {
+        "repeat_count": 1,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": true,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": null,
+        "retrieval_query": "pri_nlp_worker_svr 工程中现券场景的万得简称是如何补全的",
+        "topic_lost_terms": [],
+        "coverage": 1.0,
+        "missing": [],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "docs/01-业务与架构/券信息补全与校验逻辑.md",
+          "docs/01-业务与架构/现券意向指令处理逻辑.md",
+          "docs/01-业务与架构/私域NLP二次处理规则.md"
+        ],
+        "answer_chars": 1638,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    },
+    {
+      "task_id": "fc_024",
+      "question": "介绍一下本工程",
+      "workspace": "nlp",
+      "labeled": true,
+      "split": "holdout",
+      "priority": 0,
+      "intent_score": 1.0,
+      "retrieval_score": 1.0,
+      "presentation_score": 0.0,
+      "attributed_layer": "retrieval",
+      "evidence_reasons": [
+        "评审88.0分/建议补召回"
+      ],
+      "signals": {
+        "repeat_count": 1,
+        "trace_count": 1,
+        "data_coverage": {
+          "intent": false,
+          "retrieval": true,
+          "answer": true
+        },
+        "audit_score": 88.0,
+        "retrieval_query": "介绍一下本工程",
+        "topic_lost_terms": [],
+        "coverage": null,
+        "missing": [],
+        "gate_blocked": false,
+        "unsupported_count": 0,
+        "citations": [
+          "AGENTS.md",
+          "docs/01-业务与架构/NLP前置-业务概览.md",
+          "BUSINESS.md",
+          "docs/02-接口/接口文档.md",
+          "docs/01-业务与架构/私域NLP二次处理规则.md",
+          "docs/03-数据与缓存/债券静态数据文件说明.md"
+        ],
+        "answer_chars": 2116,
+        "llm_ok": true,
+        "truncated": false,
+        "pref_violation": false,
+        "has_structure": true
+      }
+    }
+  ]
+}

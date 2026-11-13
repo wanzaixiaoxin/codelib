@@ -1,0 +1,1377 @@
+# 自动评估标注（loop/auto_evaluate.py 生成，未经人工核对）
+#
+# 方法：期望路径/要点来自 knowledge.db 的文件名、正文与章节标题；
+#       失败层由 gate/coverage/missing 留痕 + 期望路径与要点命中率独立判定。
+# 不使用当前答案生成要点，不使用系统自己的 attributed_layer 回填 failure_layer。
+#
+# 重要：这是「独立证据的自动评估」，不是人工标注的 ground truth。
+#       可用于 L1 改动的相对比较；auto_eval.md 里的两套判定分歧才是真信号，
+#       不要拿本文件的 failure_layer 去算「归因一致率」当验收（那是自评）。
+#
+# 字段：label_confidence = high|medium|low（证据强度）
+#       human_reviewed = false
+#
+- task_id: fc_001
+  question: 券补全机制
+  workspace: nlp
+  sources:
+    conversation_ids:
+    - '219'
+    - '221'
+    - '223'
+    trace_ids:
+    - tr_391b4a8289874573
+    - tr_a29d93782c914480
+    - tr_d9b1a0df7cd34455
+    qa_memory_ids:
+    - '108'
+  signals:
+    repeat_count: 3
+    audit_score: 55.0
+    audit_verdict: fair
+    retrieval_query: pri_nlp_worker_svr 工程中现券场景的券信息补全机制是如何实现的？
+    resolved_by: llm
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: insufficient_evidence
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: true
+    llm_fail_any: false
+    trace_count: 3
+    rep_trace: tr_a29d93782c914480
+    context_tokens: 1298
+    answer_chars: 238
+    citations:
+    - docs/01-业务与架构/券信息补全与校验逻辑.md
+    answer_excerpt: 现有知识库中没有找到能直接回答「pri_nlp_worker_svr 工程中现券场景的券信息补全机制是如何实现的？」的内容（证据覆盖度约
+      0%）。为避免臆测，这里不强行作答。 检索到的相近内容仅供定位参考：docs/01-业务与架构/券信息补全与校验逻辑.md；docs/01-业
+    harness_improvements:
+    - 这正是期望行为：需要补召回/扩库才能作答，调权重无效
+    - 回答大量内容不在候选里：加强对证据的约束、或补充相关的候选片段
+    root_cause_hint: ''
+  split: train
+  priority: 11
+  expected_intent_terms:
+  - 券补全
+  expected_paths:
+  - docs/01-业务与架构/券信息补全与校验逻辑.md
+  expected_symbols: []
+  expected_answer_points:
+  - 债券代码、券名与市场补全业务逻辑
+  - 1. 处理范围
+  - 2. 进入补全前的现券指令转换
+  - 3. 普通现券补全规则
+  failure_layer: mixed
+  label_source: auto_eval
+  label_confidence: medium
+  human_reviewed: false
+  label_basis:
+    path_hit: 1.0
+    point_hit: 0.0
+    intent_hit: 0.0
+  notes: 证据门槛拦截; 改写丢主题词0.00; 要点命中0.00
+- task_id: fc_002
+  question: 资金和现券上下文管理有什么主要的区别
+  workspace: nlp
+  sources:
+    trace_ids:
+    - tr_b846698b06ca41ae
+  signals:
+    repeat_count: 0
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: '资金业务（回购/大行资金）与现券业务的会话上下文管理机制有哪些主要区别？
+
+      回购和大行资金业务的会话上下文管理机制实现
+
+      现券业务的会话上下文管理机制实现
+
+      资金业务与现券业务会话上下文管理的差异对比（状态存储、上下文隔离、续期或失效逻辑）'
+    resolved_by: llm
+    evidence_coverage: 0.667
+    missing_terms:
+    - 文管理
+    - 区别
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 1
+    rep_trace: tr_b846698b06ca41ae
+    context_tokens: 2428
+    answer_chars: 0
+    citations:
+    - docs/01-业务与架构/私域NLP二次处理规则.md
+    - docs/03-数据与缓存/Redis键说明.md
+    - docs/01-业务与架构/NLP前置-业务概览.md
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 4
+  expected_intent_terms:
+  - 资金
+  - 现券上下文
+  - 区别
+  expected_paths:
+  - docs/01-业务与架构/现券意向指令处理逻辑.md
+  - docs/90-方案与历史/现券双边报价RoundID与Done场景验收.md
+  expected_symbols: []
+  expected_answer_points:
+  - 现券意向指令处理逻辑
+  - 1. 适用范围
+  - 2. 总体处理顺序
+  - 3. 原始结果规范化
+  failure_layer: mixed
+  label_source: auto_eval
+  label_confidence: medium
+  human_reviewed: false
+  label_basis:
+    path_hit: 0.0
+    point_hit: 0.0
+    intent_hit: 0.667
+  notes: 中文主题词未命中; 期望路径命中0.00; 要点命中0.00
+- task_id: fc_003
+  question: 你做什么的
+  workspace: tdx_msg_bus_svr
+  sources:
+    conversation_ids:
+    - '69'
+    - '71'
+    - '73'
+    - '75'
+    - '95'
+  signals:
+    repeat_count: 5
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: ''
+    resolved_by: ''
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 0
+    rep_trace: ''
+    context_tokens: null
+    answer_chars: 0
+    citations: []
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 4
+  expected_intent_terms:
+  - 你做
+  expected_paths: []
+  expected_symbols: []
+  expected_answer_points: []
+  failure_layer: retrieval
+  label_source: auto_eval
+  label_confidence: low
+  human_reviewed: false
+  label_basis:
+    path_hit: null
+    point_hit: null
+    intent_hit: 1.0
+  notes: 证据门槛拦截; 覆盖0.00; 中文主题词未命中
+- task_id: fc_004
+  question: ideal渠道和qt渠道的接口实现是一致的吗
+  workspace: tdx_msg_bus_svr
+  sources:
+    conversation_ids:
+    - '79'
+    - '85'
+    - '87'
+    - '89'
+    - '91'
+  signals:
+    repeat_count: 5
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: ''
+    resolved_by: ''
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 0
+    rep_trace: ''
+    context_tokens: null
+    answer_chars: 0
+    citations: []
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: holdout
+  priority: 4
+  expected_intent_terms:
+  - ideal渠道
+  - qt渠道
+  - 接口
+  - 一致
+  - ideal
+  expected_paths:
+  - docs/02-接口/跨渠道批量发消息接口文档.md
+  - ctl/ideal_ctl.go
+  - dao/ideal_bond_card_log.go
+  - docs/04-消息与外部集成/IDeal WebSocket连接归属与内部转发设计.md
+  expected_symbols: []
+  expected_answer_points: []
+  failure_layer: retrieval
+  label_source: auto_eval
+  label_confidence: low
+  human_reviewed: false
+  label_basis:
+    path_hit: 0.0
+    point_hit: null
+    intent_hit: 1.0
+  notes: 中文主题词未命中; 期望路径命中0.00
+- task_id: fc_005
+  question: 消息服务是如何启动的？入口在哪里？
+  workspace: tdx_msg_bus_svr
+  sources:
+    conversation_ids:
+    - '59'
+    - '61'
+    - '63'
+    - '65'
+    - '67'
+  signals:
+    repeat_count: 5
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: ''
+    resolved_by: ''
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 0
+    rep_trace: ''
+    context_tokens: null
+    answer_chars: 0
+    citations: []
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 4
+  expected_intent_terms:
+  - 消息服务
+  - 启动
+  - ？入口
+  - 哪里？
+  expected_paths:
+  - docs/01-业务与架构/消息网关-业务概览.md
+  - docs/01-业务与架构/消息网关设计与业务介绍.md
+  - docs/02-接口/聚合批量发送消息接口.md
+  - docs/04-消息与外部集成/IDeal WebSocket连接归属与内部转发设计.md
+  expected_symbols: []
+  expected_answer_points: []
+  failure_layer: retrieval
+  label_source: auto_eval
+  label_confidence: low
+  human_reviewed: false
+  label_basis:
+    path_hit: 0.0
+    point_hit: null
+    intent_hit: 1.0
+  notes: 期望路径命中0.00
+- task_id: fc_006
+  question: 消息网关如何路由消息？
+  workspace: sample
+  sources:
+    conversation_ids:
+    - '1'
+    - '11'
+    - '15'
+    - '17'
+    - '21'
+    - '23'
+    - '27'
+    - '29'
+    - '3'
+    - '33'
+    - '35'
+    - '39'
+    - '41'
+    - '49'
+    - '51'
+    - '53'
+    - '55'
+    - '57'
+    - '7'
+    - '9'
+  signals:
+    repeat_count: 20
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: ''
+    resolved_by: ''
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 0
+    rep_trace: ''
+    context_tokens: null
+    answer_chars: 0
+    citations: []
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 4
+  expected_intent_terms:
+  - 消息网关
+  - 路由消息？
+  expected_paths: []
+  expected_symbols: []
+  expected_answer_points: []
+  failure_layer: ok
+  label_source: auto_eval
+  label_confidence: low
+  human_reviewed: false
+  label_basis:
+    path_hit: null
+    point_hit: null
+    intent_hit: 1.0
+  notes: 无明确失败信号
+- task_id: fc_007
+  question: MemoryStore 怎么检索？
+  workspace: sample
+  sources:
+    conversation_ids:
+    - '13'
+    - '19'
+    - '25'
+    - '31'
+    - '37'
+    - '5'
+  signals:
+    repeat_count: 6
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: ''
+    resolved_by: ''
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 0
+    rep_trace: ''
+    context_tokens: null
+    answer_chars: 0
+    citations: []
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 4
+  expected_intent_terms:
+  - 检索？
+  - MemoryStore
+  expected_paths:
+  - src/storage.py
+  - src/handlers.py
+  - src/gateway.py
+  expected_symbols:
+  - MemoryStore
+  - MemoryStore.__init__
+  - MemoryStore.add_fact
+  - CommandHandler
+  - CommandHandler.__init__
+  - CommandHandler.handle
+  expected_answer_points:
+  - MemoryStore
+  - MemoryStore.__init__
+  - MemoryStore.add_fact
+  - MemoryStore.search
+  failure_layer: presentation
+  label_source: auto_eval
+  label_confidence: medium
+  human_reviewed: false
+  label_basis:
+    path_hit: 1.0
+    point_hit: 0.25
+    intent_hit: 1.0
+  notes: 要点命中0.25
+- task_id: fc_008
+  question: 你是只分析的文档，还是分析了代码
+  workspace: nlp
+  sources:
+    trace_ids:
+    - tr_46f233ce6287437f
+  signals:
+    repeat_count: 0
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: '你的回答是仅基于文档（BUSINESS.md、AGENTS.md 等）分析得到的，还是也实际分析了代码库中的代码实现？
+
+      BUSINESS.md 和 AGENTS.md 等文档文件在代码库中的位置及其描述的业务流程与约定
+
+      BUSINESS.md 中描述的业务规则在代码实现中的对应位置（相关模块、函数或服务）
+
+      AGENTS.md 中的约定在实际代码结构中的落实情况，以及文档与代码实现可能存在不一致的地方'
+    resolved_by: llm
+    evidence_coverage: 0.714
+    missing_terms:
+    - 回答
+    - 分析得到
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 1
+    rep_trace: tr_46f233ce6287437f
+    context_tokens: 2346
+    answer_chars: 0
+    citations:
+    - AGENTS.md
+    - BUSINESS.md
+    - .workbuddy/memory/2026-10-19.md
+    - docs/05-部署与运维/部署与环境依赖.md
+    - docs/02-接口/接口文档.md
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: holdout
+  priority: 3
+  expected_intent_terms:
+  - 只分析
+  - ，还
+  - 分析
+  expected_paths: []
+  expected_symbols: []
+  expected_answer_points: []
+  failure_layer: retrieval
+  label_source: auto_eval
+  label_confidence: low
+  human_reviewed: false
+  label_basis:
+    path_hit: null
+    point_hit: null
+    intent_hit: 0.667
+  notes: 中文主题词未命中
+- task_id: fc_009
+  question: 总一下当前资金上下文
+  workspace: nlp
+  sources:
+    conversation_ids:
+    - '229'
+    - '231'
+    trace_ids:
+    - tr_352280df515343f6
+    - tr_415c2001eeb244f1
+    qa_memory_ids:
+    - '111'
+  signals:
+    repeat_count: 2
+    audit_score: 72.0
+    audit_verdict: fair
+    retrieval_query: '请总结一下当前资金业务场景下的会话上下文内容（包括已识别的资金指令、方向、期限、价格等要素）及其处理机制。
+
+      资金业务会话上下文管理 上下文要素识别 资金指令 方向 期限 价格 要素提取
+
+      会话上下文处理机制 指令解析流程 上下文继承与更新 多轮会话中指令要素的补全与确认逻辑
+
+      资金业务指令识别失败或要素缺失时的处理路径 回退 澄清 配置约束'
+    resolved_by: llm
+    evidence_coverage: 0.625
+    missing_terms:
+    - 总结一
+    - 文内容
+    - 其处理
+    gate_action: null
+    llm_ok: true
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: true
+    trace_count: 2
+    rep_trace: tr_352280df515343f6
+    context_tokens: 3360
+    answer_chars: 3905
+    citations:
+    - docs/01-业务与架构/NLP前置-业务概览.md
+    - docs/01-业务与架构/私域NLP二次处理规则.md
+    - docs/01-业务与架构/指令类型场景判断方法.md
+    - docs/01-业务与架构/券信息补全与校验逻辑.md
+    answer_excerpt: '# 资金业务场景下的会话上下文内容与处理机制  ## 核心结论  当前问题在上一轮已结合上下文理解为：请总结资金类业务（主要是**回购
+      repo**，以及由回购转换出的**大行资金 lend**）场景下，会话上下文里会保存/补全哪些业务要素（方向、期限、价格/利率、数量、质押券等'
+    harness_improvements:
+    - 检索应补充召回 docs/03-数据与缓存/Redis键说明.md 中回购/现券上下文相关章节，使回答能覆盖 Redis Key 结构、Field 与
+      TTL 细节，避免模型只能说'候选未覆盖'。
+    - 应额外召回 docs/01-业务与架构/私域NLP二次处理规则.md 的 §2.4 清理/失效条件章节，与已召回的 §2.1/§2.3 拼成完整上下文管理证据链。
+    - 生成端应提高 max_tokens 或对长回答做分段/续写控制，避免本回答在末尾引用处被截断导致'存储与清理机制'整段缺失。
+    - 检索 top_k 可保持 10，但建议对『资金/回购/上下文/TTL』类查询开启重排或优先匹配 私域NLP二次处理规则.md 全文段落而非目录片段（片段4仅是目录，信息密度低）。
+    - 可增加一张知识卡总结『回购上下文要素与生命周期（存储/复用/清理/TTL）』，供此类跨文档综合型问题直接引用。
+    root_cause_hint: 当前问题不是排序能解决的：候选覆盖不足（需补充召回/扩库）。需检查门槛、改写或提示词。
+  split: train
+  priority: 3
+  expected_intent_terms:
+  - 资金上下文
+  expected_paths:
+  - docs/03-数据与缓存/Redis键说明.md
+  - docs/01-业务与架构/私域NLP二次处理规则.md
+  expected_symbols: []
+  expected_answer_points:
+  - pri_nlp_worker_svr Redis 键说明
+  - 1. 文档范围
+  - 2. Key 前缀
+  - 3. 会话主 Hash
+  failure_layer: mixed
+  label_source: auto_eval
+  label_confidence: high
+  human_reviewed: false
+  label_basis:
+    path_hit: 0.5
+    point_hit: 0.0
+    intent_hit: 0.0
+  notes: 中文主题词未命中; 改写丢主题词0.00; 要点命中0.00
+- task_id: fc_010
+  question: 消息网关收到上行消息后是怎么处理的？
+  workspace: tdx_msg_bus_svr
+  sources:
+    conversation_ids:
+    - '107'
+    - '113'
+  signals:
+    repeat_count: 2
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: ''
+    resolved_by: ''
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 0
+    rep_trace: ''
+    context_tokens: null
+    answer_chars: 0
+    citations: []
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 3
+  expected_intent_terms: []
+  expected_paths: []
+  expected_symbols: []
+  expected_answer_points: []
+  failure_layer: ok
+  label_source: auto_eval
+  label_confidence: low
+  human_reviewed: false
+  label_basis:
+    path_hit: null
+    point_hit: null
+    intent_hit: null
+  notes: 无明确失败信号
+- task_id: fc_011
+  question: 当前支持哪些渠道
+  workspace: msg_gateway
+  sources:
+    conversation_ids:
+    - '45'
+    - '47'
+  signals:
+    repeat_count: 2
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: ''
+    resolved_by: ''
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 0
+    rep_trace: ''
+    context_tokens: null
+    answer_chars: 0
+    citations: []
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 3
+  expected_intent_terms:
+  - 渠道
+  expected_paths:
+  - docs/02-接口/跨渠道批量发消息接口文档.md
+  - docs/90-方案与历史/跨渠道批量发消息方案.md
+  - docs/01-业务与架构/消息网关-业务概览.md
+  - docs/01-业务与架构/消息网关设计与业务介绍.md
+  expected_symbols: []
+  expected_answer_points: []
+  failure_layer: ok
+  label_source: auto_eval
+  label_confidence: low
+  human_reviewed: false
+  label_basis:
+    path_hit: 1.0
+    point_hit: null
+    intent_hit: 1.0
+  notes: 无明确失败信号
+- task_id: fc_012
+  question: 我希望再回答结果中不要包含太多的代码，我不关心代码
+  workspace: nlp
+  sources:
+    conversation_ids:
+    - '233'
+    trace_ids:
+    - tr_53e6ad5c72fa4d6a
+    qa_memory_ids:
+    - '112'
+  signals:
+    repeat_count: 1
+    audit_score: 85.0
+    audit_verdict: good
+    retrieval_query: '请总结资金业务（回购 repo 及大行资金 lend）场景下会话上下文的要素构成、生成、复用与清理机制，要求用纯文字描述，不要包含代码内容。
+
+      回购 repo 业务场景 会话上下文 要素构成 生成 复用 清理 机制
+
+      大行资金 lend 业务场景 会话上下文 生成 复用 清理 机制
+
+      资金业务 会话上下文 初始化 生命周期 失效清理 复用逻辑'
+    resolved_by: llm
+    evidence_coverage: 0.9
+    missing_terms:
+    - 素构成
+    gate_action: null
+    llm_ok: true
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 1
+    rep_trace: tr_53e6ad5c72fa4d6a
+    context_tokens: 2816
+    answer_chars: 3358
+    citations:
+    - docs/01-业务与架构/私域NLP二次处理规则.md
+    - docs/02-接口/接口文档.md
+    - docs/01-业务与架构/NLP前置-业务概览.md
+    - docs/01-业务与架构/Repo转Lend转换逻辑.md
+    answer_excerpt: '# 资金业务（回购 repo / 大行资金 lend）会话上下文机制总结  ## 核心结论  资金业务的上下文机制以**回购（repo）**为核心：系统在
+      Redis 中维护按“日”分 Key 的会话轮次上下文（存储在 `_repo_*` 结构中，TTL 仅 30 分钟），消息处'
+    harness_improvements:
+    - 补充召回 docs/03-数据与缓存/Redis键说明.md §6（回购 _repo_* 键的 Field 与 TTL 定义），使回答能给出要素的字段级构成而非仅业务概念。
+    - 补充召回 私域NLP二次处理规则.md §2.3（RoundID 生成/复用全量策略），回答中『回购 RoundID 按期限和方向关联』的机制目前缺乏权威细节支撑。
+    - 修复片段截断问题：片段5（2.1 存储要点）在『所有上下文写入 done 结果除外；回购』处被切断，导致模型只能推断『回购 done/ref 不写入上下文』，应保证片段按完整段落边界切分。
+    - 检查并放宽模型输出的 max_tokens 或回答长度限制，本次回答末尾在引用处被截断，清理机制的后半部分（ref 语义差异、跨天清理、外部回指）未能呈现。
+    - 可召回 docs/01-业务与架构/现券意向指令处理逻辑.md 中 done 关联下发章节，使『外部系统应在 Kafka 回写后调用 done 接口』的说明有更完整的契约上下文。
+    root_cause_hint: 当前问题不是排序能解决的：候选覆盖不足（需补充召回/扩库）。需检查门槛、改写或提示词。
+  split: holdout
+  priority: 2
+  expected_intent_terms:
+  - 中不要
+  - ，我不
+  expected_paths:
+  - docs/03-数据与缓存/Redis键说明.md
+  - docs/01-业务与架构/现券意向指令处理逻辑.md
+  expected_symbols: []
+  expected_answer_points:
+  - pri_nlp_worker_svr Redis 键说明
+  - 1. 文档范围
+  - 2. Key 前缀
+  - 3. 会话主 Hash
+  failure_layer: mixed
+  label_source: auto_eval
+  label_confidence: high
+  human_reviewed: false
+  label_basis:
+    path_hit: 0.0
+    point_hit: 0.0
+    intent_hit: 0.0
+  notes: 中文主题词未命中; 期望路径命中0.00; 改写丢主题词0.00; 要点命中0.00
+- task_id: fc_013
+  question: 它的入口在哪？
+  workspace: tdx_msg_bus_svr
+  sources:
+    conversation_ids:
+    - '109'
+  signals:
+    repeat_count: 1
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: ''
+    resolved_by: ''
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 0
+    rep_trace: ''
+    context_tokens: null
+    answer_chars: 0
+    citations: []
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 2
+  expected_intent_terms:
+  - 入口
+  - 哪？
+  expected_paths: []
+  expected_symbols: []
+  expected_answer_points: []
+  failure_layer: ok
+  label_source: auto_eval
+  label_confidence: low
+  human_reviewed: false
+  label_basis:
+    path_hit: null
+    point_hit: null
+    intent_hit: 1.0
+  notes: 无明确失败信号
+- task_id: fc_014
+  question: 消息网关收到一条上行消息后，是怎么一步步处理的？
+  workspace: tdx_msg_bus_svr
+  sources:
+    conversation_ids:
+    - '83'
+  signals:
+    repeat_count: 1
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: ''
+    resolved_by: ''
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 0
+    rep_trace: ''
+    context_tokens: null
+    answer_chars: 0
+    citations: []
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 2
+  expected_intent_terms:
+  - 一步步
+  expected_paths: []
+  expected_symbols: []
+  expected_answer_points: []
+  failure_layer: retrieval
+  label_source: auto_eval
+  label_confidence: low
+  human_reviewed: false
+  label_basis:
+    path_hit: null
+    point_hit: null
+    intent_hit: 1.0
+  notes: 中文主题词未命中
+- task_id: fc_015
+  question: 这个工程是做什么的，主要解决什么问题
+  workspace: tdx_msg_bus_svr
+  sources:
+    conversation_ids:
+    - '81'
+  signals:
+    repeat_count: 1
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: ''
+    resolved_by: ''
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 0
+    rep_trace: ''
+    context_tokens: null
+    answer_chars: 0
+    citations: []
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 2
+  expected_intent_terms:
+  - 解决
+  expected_paths:
+  - docs/01-业务与架构/消息网关-业务概览.md
+  expected_symbols: []
+  expected_answer_points: []
+  failure_layer: ok
+  label_source: auto_eval
+  label_confidence: low
+  human_reviewed: false
+  label_basis:
+    path_hit: 1.0
+    point_hit: null
+    intent_hit: 1.0
+  notes: 无明确失败信号
+- task_id: fc_016
+  question: 你支持哪些消息渠道
+  workspace: tdx_msg_bus_svr
+  sources:
+    conversation_ids:
+    - '77'
+  signals:
+    repeat_count: 1
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: ''
+    resolved_by: ''
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 0
+    rep_trace: ''
+    context_tokens: null
+    answer_chars: 0
+    citations: []
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: holdout
+  priority: 2
+  expected_intent_terms:
+  - 你支持
+  - 消息渠道
+  expected_paths:
+  - docs/02-接口/跨渠道批量发消息接口文档.md
+  - docs/90-方案与历史/跨渠道批量发消息方案.md
+  - docs/01-业务与架构/消息网关-业务概览.md
+  - docs/01-业务与架构/消息网关设计与业务介绍.md
+  expected_symbols: []
+  expected_answer_points: []
+  failure_layer: ok
+  label_source: auto_eval
+  label_confidence: low
+  human_reviewed: false
+  label_basis:
+    path_hit: 1.0
+    point_hit: null
+    intent_hit: 1.0
+  notes: 无明确失败信号
+- task_id: fc_017
+  question: 消息网关是怎么路由的
+  workspace: msg_gateway
+  sources:
+    conversation_ids:
+    - '43'
+  signals:
+    repeat_count: 1
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: ''
+    resolved_by: ''
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: false
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 0
+    rep_trace: ''
+    context_tokens: null
+    answer_chars: 0
+    citations: []
+    answer_excerpt: ''
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 2
+  expected_intent_terms:
+  - 消息网关
+  - 路由
+  expected_paths:
+  - docs/01-业务与架构/消息网关-业务概览.md
+  - docs/01-业务与架构/消息网关设计与业务介绍.md
+  - docs/02-接口/聚合批量发送消息接口.md
+  - docs/04-消息与外部集成/IDeal WebSocket连接归属与内部转发设计.md
+  expected_symbols: []
+  expected_answer_points: []
+  failure_layer: ok
+  label_source: auto_eval
+  label_confidence: low
+  human_reviewed: false
+  label_basis:
+    path_hit: 0.75
+    point_hit: null
+    intent_hit: 1.0
+  notes: 无明确失败信号
+- task_id: fc_018
+  question: 目前资金和现券业务有哪些公用的部分
+  workspace: nlp
+  sources:
+    conversation_ids:
+    - '239'
+    trace_ids:
+    - tr_922fb01778ef4ba8
+    qa_memory_ids:
+    - '115'
+  signals:
+    repeat_count: 1
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: '当前系统中资金业务和现券业务有哪些共用或复用的部分（代码、流程、消息结构、服务等）？
+
+      资金业务与现券业务的共用代码、公共模块、基础组件或工具类（如账户、清算、结算、风控等复用部分）的实现与位置
+
+      资金业务与现券业务共用的消息结构、报文协议、流程步骤或状态机（如下单、成交、清算结算流程中的复用逻辑）
+
+      资金业务与现券业务共同调用的服务、接口、配置项，以及相关调用方/被调用方和失败处理路径'
+    resolved_by: llm
+    evidence_coverage: 0.875
+    missing_terms:
+    - 部分
+    gate_action: null
+    llm_ok: true
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 1
+    rep_trace: tr_922fb01778ef4ba8
+    context_tokens: 3379
+    answer_chars: 2182
+    citations:
+    - docs/01-业务与架构/NLP前置-业务概览.md
+    - docs/README.md
+    - docs/01-业务与架构/指令类型场景判断方法.md
+    - AGENTS.md
+    answer_excerpt: '# 资金业务与现券业务的共用与复用部分  ## 核心结论  两套业务**共用同一套主流程和基础设施**：同一条消息从 Kafka
+      消费进来后，走相同的解析、外部 NLP 调用、后处理、Kafka 回写与 TCP 推送链路；差异主要发生在后处理环节的**分发循环内部分支**和**业'
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 1
+  expected_intent_terms:
+  - 目前资金
+  - 现券业务
+  - 公用
+  - 部分
+  expected_paths:
+  - docs/01-业务与架构/现券意向指令处理逻辑.md
+  - docs/90-方案与历史/现券双边报价RoundID与Done场景验收.md
+  - docs/01-业务与架构/NLP前置-业务概览.md
+  - docs/01-业务与架构/Repo转Lend转换逻辑.md
+  expected_symbols: []
+  expected_answer_points:
+  - 现券意向指令处理逻辑
+  - 1. 适用范围
+  - 2. 总体处理顺序
+  - 3. 原始结果规范化
+  failure_layer: mixed
+  label_source: auto_eval
+  label_confidence: medium
+  human_reviewed: false
+  label_basis:
+    path_hit: 0.25
+    point_hit: 0.0
+    intent_hit: 0.5
+  notes: 中文主题词未命中; 期望路径命中0.25; 要点命中0.00
+- task_id: fc_019
+  question: 当前的单聊的聊天顺序是否会顺序到达下游kafka
+  workspace: nlp
+  sources:
+    conversation_ids:
+    - '237'
+    trace_ids:
+    - tr_02be45def5f64af4
+    qa_memory_ids:
+    - '114'
+  signals:
+    repeat_count: 1
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: 单聊（IDEAL 单聊）的消息按聊天顺序消费处理后，发送到下游 Kafka 时是否能保证消息的顺序性到达
+    resolved_by: llm
+    evidence_coverage: 0.857
+    missing_terms:
+    - 顺序性到达
+    gate_action: null
+    llm_ok: true
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 1
+    rep_trace: tr_02be45def5f64af4
+    context_tokens: 2945
+    answer_chars: 922
+    citations:
+    - BUSINESS.md
+    - AGENTS.md
+    - docs/01-业务与架构/NLP前置-业务概览.md
+    - .workbuddy/memory/MEMORY.md
+    answer_excerpt: '# 结论：候选证据不足以确认“顺序保证”，只能说大概率是“尽力而为的顺序”，而非严格保证  从候选能看到的事实链路是：IDEAL
+      单聊消息按 Topic 消费后，同步走“解析 JSON → 调外部 NLP → 后处理补 round_id → 封装 `GatewayMsgRawNl'
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 1
+  expected_intent_terms:
+  - 单聊
+  - 聊天顺序
+  - kafka
+  expected_paths:
+  - kafka_client/kafka_producer_client.go
+  - kafka_client/kafka_consumer_client.go
+  - config/kafka_config.go
+  - conf/kafka_config.json
+  expected_symbols:
+  - newKafkaProducerClientWithSASL
+  - newKafkaProducerClientWithSSL
+  - newKafkaProducerClient
+  - newKafkaConsumerClientWithSASL
+  - newKafkaConsumerClientWithSSl
+  - newKafkaConsumerClient
+  expected_answer_points:
+  - newKafkaProducerClientWithSASL
+  - newKafkaProducerClientWithSSL
+  - newKafkaProducerClient
+  - Close
+  failure_layer: mixed
+  label_source: auto_eval
+  label_confidence: medium
+  human_reviewed: false
+  label_basis:
+    path_hit: 0.0
+    point_hit: 0.0
+    intent_hit: 1.0
+  notes: 中文主题词未命中; 期望路径命中0.00; 要点命中0.00
+- task_id: fc_020
+  question: 当前系统和外部有那些交互
+  workspace: nlp
+  sources:
+    conversation_ids:
+    - '235'
+    trace_ids:
+    - tr_3499a340794241c7
+    qa_memory_ids:
+    - '113'
+  signals:
+    repeat_count: 1
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: 当前系统和外部有哪些交互
+    resolved_by: llm
+    evidence_coverage: 0.667
+    missing_terms:
+    - 交互
+    gate_action: null
+    llm_ok: true
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 1
+    rep_trace: tr_3499a340794241c7
+    context_tokens: 2205
+    answer_chars: 2457
+    citations:
+    - AGENTS.md
+    - BUSINESS.md
+    - docs/01-业务与架构/NLP前置-业务概览.md
+    - docs/02-接口/接口文档.md
+    answer_excerpt: '# 当前系统与外部的交互面总结  ## 直接结论  本服务是一个纯中间处理层，它与外部的交互可以归为六类：**Kafka
+      消息的进出**、**外部 NLP 服务的调用**、**Redis 的读写**、**TCP 长连接推送**、**HTTP 接口（健康检查/调试 + 外部系统回调'
+    harness_improvements: []
+    root_cause_hint: ''
+  split: holdout
+  priority: 1
+  expected_intent_terms:
+  - 外部
+  - 些交互
+  expected_paths:
+  - docs/04-消息与外部集成/企点消息Content结构.md
+  expected_symbols: []
+  expected_answer_points:
+  - 企点消息 Content 数据结构说明
+  - XML 字段说明
+  - NlpResult JSON 结构
+  failure_layer: mixed
+  label_source: auto_eval
+  label_confidence: medium
+  human_reviewed: false
+  label_basis:
+    path_hit: 0.0
+    point_hit: 0.0
+    intent_hit: 1.0
+  notes: 中文主题词未命中; 期望路径命中0.00; 要点命中0.00
+- task_id: fc_021
+  question: 详细介绍一下现券的上下文管理
+  workspace: nlp
+  sources:
+    conversation_ids:
+    - '217'
+    trace_ids:
+    - tr_49ed6e01c078499b
+    qa_memory_ids:
+    - '107'
+  signals:
+    repeat_count: 1
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: 在 pri_nlp_worker_svr 工程中，现券场景的会话上下文管理具体是如何实现的？请详细介绍其处理流程和相关代码。
+    resolved_by: llm
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: true
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 1
+    rep_trace: tr_49ed6e01c078499b
+    context_tokens: 1987
+    answer_chars: 3237
+    citations:
+    - docs/01-业务与架构/私域NLP二次处理规则.md
+    - docs/01-业务与架构/现券意向指令处理逻辑.md
+    - BUSINESS.md
+    - docs/03-数据与缓存/Redis键说明.md
+    - docs/90-方案与历史/现券双边报价RoundID与Done场景验收.md
+    answer_excerpt: '## 核心结论  现券场景的会话上下文管理是一个围绕 **Redis 日级 Key + RoundID 轮次 + done
+      清理** 三层机制构建的闭环：每条现券意向消息经过修正、规范化、补充、券信息校验后，按券查找/复用/创建 RoundID，再把轮次上下文合并写入 Redis'
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 1
+  expected_intent_terms:
+  - 现券
+  - 上下文
+  expected_paths:
+  - docs/01-业务与架构/现券意向指令处理逻辑.md
+  - docs/90-方案与历史/现券双边报价RoundID与Done场景验收.md
+  - BUSINESS.md
+  expected_symbols: []
+  expected_answer_points:
+  - 现券意向指令处理逻辑
+  - 1. 适用范围
+  - 2. 总体处理顺序
+  - 3. 原始结果规范化
+  failure_layer: presentation
+  label_source: auto_eval
+  label_confidence: medium
+  human_reviewed: false
+  label_basis:
+    path_hit: 1.0
+    point_hit: 0.25
+    intent_hit: 1.0
+  notes: 要点命中0.25
+- task_id: fc_022
+  question: 价格补全机制
+  workspace: nlp
+  sources:
+    conversation_ids:
+    - '227'
+    trace_ids:
+    - tr_858e6d60ea3c48b0
+    qa_memory_ids:
+    - '110'
+  signals:
+    repeat_count: 1
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: 现券场景下价格字段的补全机制是如何实现的？
+    resolved_by: llm
+    evidence_coverage: 1.0
+    missing_terms: []
+    gate_action: null
+    llm_ok: true
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 1
+    rep_trace: tr_858e6d60ea3c48b0
+    context_tokens: 2248
+    answer_chars: 2910
+    citations:
+    - docs/01-业务与架构/NLP前置-业务概览.md
+    - docs/01-业务与架构/现券意向指令处理逻辑.md
+    - docs/01-业务与架构/私域NLP二次处理规则.md
+    - BUSINESS.md
+    - docs/90-方案与历史/现券双边报价RoundID与Done场景验收.md
+    answer_excerpt: '# 现券场景下价格字段的补全机制  ## 核心结论  现券的价格补全发生在 NLP 一级结果之后、下发业务之前的**债券后处理**环节（位于
+      `bond_chat/bond_chat.go`，BUSINESS.md:192-204）。它不是单一规则，而是三条相对独立的路径：  1'
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 0
+  expected_intent_terms:
+  - 价格补全
+  expected_paths:
+  - docs/01-业务与架构/券信息补全与校验逻辑.md
+  expected_symbols: []
+  expected_answer_points:
+  - 债券代码、券名与市场补全业务逻辑
+  - 1. 处理范围
+  - 2. 进入补全前的现券指令转换
+  - 3. 普通现券补全规则
+  failure_layer: mixed
+  label_source: auto_eval
+  label_confidence: medium
+  human_reviewed: false
+  label_basis:
+    path_hit: 0.0
+    point_hit: 0.0
+    intent_hit: 0.0
+  notes: 期望路径命中0.00; 改写丢主题词0.00; 要点命中0.00
+- task_id: fc_023
+  question: 万得简称如何补全
+  workspace: nlp
+  sources:
+    conversation_ids:
+    - '225'
+    trace_ids:
+    - tr_04b612610cea4e5b
+    qa_memory_ids:
+    - '109'
+  signals:
+    repeat_count: 1
+    audit_score: null
+    audit_verdict: null
+    retrieval_query: pri_nlp_worker_svr 工程中现券场景的万得简称是如何补全的
+    resolved_by: llm
+    evidence_coverage: 1.0
+    missing_terms: []
+    gate_action: null
+    llm_ok: true
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 1
+    rep_trace: tr_04b612610cea4e5b
+    context_tokens: 2019
+    answer_chars: 1638
+    citations:
+    - docs/01-业务与架构/券信息补全与校验逻辑.md
+    - docs/01-业务与架构/现券意向指令处理逻辑.md
+    - docs/01-业务与架构/私域NLP二次处理规则.md
+    answer_excerpt: '# 现券场景下万得简称（Wind 简称）的补全机制  ## 直接结论  在本工程中，**Wind 简称（万得简称）本身不是一个会被下发给业务的补全字段，而是补全链路中的“中间匹配依据”**：当标准券名匹配不到时，系统用它来反查券代码和市场，并在匹配成功后把券名改写为**标准券名*'
+    harness_improvements: []
+    root_cause_hint: ''
+  split: train
+  priority: 0
+  expected_intent_terms:
+  - 万得简称
+  - 补全
+  expected_paths:
+  - docs/01-业务与架构/券信息补全与校验逻辑.md
+  expected_symbols: []
+  expected_answer_points:
+  - 债券代码、券名与市场补全业务逻辑
+  - 1. 处理范围
+  - 2. 进入补全前的现券指令转换
+  - 3. 普通现券补全规则
+  failure_layer: presentation
+  label_source: auto_eval
+  label_confidence: medium
+  human_reviewed: false
+  label_basis:
+    path_hit: 1.0
+    point_hit: 0.0
+    intent_hit: 1.0
+  notes: 要点命中0.00
+- task_id: fc_024
+  question: 介绍一下本工程
+  workspace: nlp
+  sources:
+    conversation_ids:
+    - '215'
+    trace_ids:
+    - tr_1584738f2e264833
+    qa_memory_ids:
+    - '106'
+  signals:
+    repeat_count: 1
+    audit_score: 88.0
+    audit_verdict: good
+    retrieval_query: 介绍一下本工程
+    resolved_by: none
+    evidence_coverage: null
+    missing_terms: []
+    gate_action: null
+    llm_ok: true
+    quality_revised: false
+    gate_blocked_any: false
+    llm_fail_any: false
+    trace_count: 1
+    rep_trace: tr_1584738f2e264833
+    context_tokens: 2168
+    answer_chars: 2116
+    citations:
+    - AGENTS.md
+    - docs/01-业务与架构/NLP前置-业务概览.md
+    - BUSINESS.md
+    - docs/02-接口/接口文档.md
+    - docs/01-业务与架构/私域NLP二次处理规则.md
+    - docs/03-数据与缓存/债券静态数据文件说明.md
+    - .workbuddy/memory/MEMORY.md
+    - docs/03-数据与缓存/Redis键说明.md
+    - sql/create_nlp_parse_record.sql
+    answer_excerpt: '## 直接结论  **pri_nlp_worker_svr 是一个私域场景（企点、IDEAL）的前置 NLP 处理服务**：它接收
+      NLP 一级结果，在回写 Kafka / 推送 TCP 之前，对结果做二次处理——包括会话上下文管理、交易要素修正、券信息补全、基于中债估值的价格处'
+    harness_improvements:
+    - 当前只召回了 AGENTS.md:1-6 的标题行，应召回 AGENTS.md 或 BUSINESS.md 开头的『项目定位/整体架构/技术栈』总览章节，为宽泛的『介绍工程』问题提供权威综述。
+    - sql/create_nlp_parse_record.sql 只召回了前2行，应召回完整建表语句或补充分表机制说明文档，避免模型仅凭极少行数推断『按月分表、启动自动建表』。
+    - .workbuddy/memory/MEMORY.md 片段在句子中间被截断（『不建 te…』），检索切分应按完整句子/条目边界，防止模型引用被截断的约定。
+    - 应提高 top_k 或新增 README/部署/配置类知识卡，补充上游 NLP 一级结果的来源、Kafka 消息格式与 conf/ 配置项说明，这些正是模型只能声明『未覆盖』的部分。
+    - docs/03-数据与缓存/Redis键说明.md 只召回了运维注意事项一节，建议同时召回其 Key 结构/TTL 章节，使数据缓存部分介绍更完整。
+    root_cause_hint: 当前问题不是排序能解决的：候选覆盖不足（需补充召回/扩库）。需调整检索参数或提示词。
+  split: holdout
+  priority: 0
+  expected_intent_terms:
+  - 本工程
+  expected_paths:
+  - docs/03-数据与缓存/Redis键说明.md
+  expected_symbols: []
+  expected_answer_points:
+  - pri_nlp_worker_svr Redis 键说明
+  - 1. 文档范围
+  - 2. Key 前缀
+  - 3. 会话主 Hash
+  failure_layer: presentation
+  label_source: auto_eval
+  label_confidence: high
+  human_reviewed: false
+  label_basis:
+    path_hit: 1.0
+    point_hit: 0.0
+    intent_hit: 1.0
+  notes: 要点命中0.00

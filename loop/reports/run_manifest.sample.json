@@ -1,0 +1,37 @@
+{
+  "run_id": "run_c9bd0ee85db7",
+  "created_at": "2026-11-13 08:27:34",
+  "code_commit": "local",
+  "runner_sha256": "",
+  "runner_version": "1",
+  "platform": "",
+  "python_version": "",
+  "model_id": "workbuddy/glm-5.3",
+  "provider_protocol": "openai_compatible",
+  "model_options_nonsecret": {},
+  "cases_sha256": "",
+  "workspace_commit": "",
+  "knowledge_db_sha256": "",
+  "agents_md_sha256": "a1f883b0aa8c48a0af67dc750ef2b09364eec15fbcc27173a77dcbf6da01598b",
+  "lexicon_sha256": "",
+  "toolset": [
+    "read_body",
+    "grep",
+    "callers"
+  ],
+  "permission_mode": "read_only",
+  "assembly_fingerprint": "24f4761ee4163f6c",
+  "runtime_limits": {
+    "max_steps": 12,
+    "max_chars": 24000
+  },
+  "sample": {
+    "session_id": "s1",
+    "api_key_SHOULD_NOT_APPEAR": "<redacted>"
+  },
+  "artifacts": [],
+  "scoring": {
+    "by": "external_script",
+    "self_report_used": false
+  }
+}

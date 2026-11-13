@@ -22,3 +22,5 @@ logs/
 .idea/
 *.swp
 .DS_Store
+.alma-snapshots
+.archify

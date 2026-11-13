@@ -1,0 +1,137 @@
+{
+  "generated_at": "2026-11-12 16:55:30",
+  "cases": "D:\\tdx\\zq\\codelib\\loop\\failure_cases.draft.yaml",
+  "run_db": "loop\\runs\\l0_rest4\\codelib.db",
+  "llm_model": "workbuddy/glm-5.3",
+  "base_url_configured": true,
+  "workspaces": [
+    {
+      "id": "sample",
+      "name": "",
+      "path": "D:\\tdx\\zq\\codelib\\sample_workspace"
+    },
+    {
+      "id": "tdx_msg_bus_svr",
+      "name": "",
+      "path": "D:\\tdx\\zq\\code\\tdx_msg_bus_svr"
+    }
+  ],
+  "cleared_tables": [
+    "trace_event",
+    "trace",
+    "audit",
+    "conversations",
+    "qa_memory",
+    "facts",
+    "chat_sessions",
+    "auth_sessions"
+  ],
+  "count": 4,
+  "total_ms": 60086,
+  "results": [
+    {
+      "task_id": "fc_006",
+      "question": "消息网关如何路由消息？",
+      "workspace": "sample",
+      "original_workspace": "sample",
+      "session_id": "l0:fc_006",
+      "error": "",
+      "trace_id": "tr_0fce3cc64dc54b8f",
+      "answer_chars": 916,
+      "answer_excerpt": "**结论：** 消息网关的路由逻辑非常简单——基于消息文本是否以 `/` 开头来分发：以 `/` 开头的交给 CommandHandler（斜杠命令），其余交给 QueryHandler（自然语言问答）。  **路由流程**：外部渠道（企业微信 / 飞书 / 本地通道）的消息先被转换为统一的 `IncomingMess",
+      "citations": [
+        "src/gateway.py:44-56 (MessageGateway.route)",
+        "docs/api.md:3-8 (## MessageGateway.route)",
+        "docs/architecture.md:3-10 (## 1. 总览)"
+      ],
+      "usage": {
+        "context_tokens": 2122,
+        "full_corpus_tokens": 1599,
+        "saved_tokens": 0,
+        "saved_ratio": 0.0,
+        "llm_used": true,
+        "llm_provider": "openai_compatible",
+        "elapsed_ms": 17558
+      },
+      "elapsed_ms": 17580
+    },
+    {
+      "task_id": "fc_007",
+      "question": "MemoryStore 怎么检索？",
+      "workspace": "sample",
+      "original_workspace": "sample",
+      "session_id": "l0:fc_007",
+      "error": "",
+      "trace_id": "tr_811e4c2bd1cc48bc",
+      "answer_chars": 557,
+      "answer_excerpt": "**结论：MemoryStore 的检索就是一个不区分大小写的子串匹配（关键词模糊匹配），逐条线性扫描内存中的事实列表，返回所有命中的字符串。**  具体来说，检索逻辑在 `search(query)` 方法里：先把 query 转小写（空字符串安全处理为空），然后遍历内部的事实列表 `_facts`，凡是查询串（小写",
+      "citations": [
+        "src/storage.py:18-21 (MemoryStore.search)",
+        "docs/api.md:9-14 (## MemoryStore)",
+        "src/storage.py:7-25 (MemoryStore)"
+      ],
+      "usage": {
+        "context_tokens": 1990,
+        "full_corpus_tokens": 1599,
+        "saved_tokens": 0,
+        "saved_ratio": 0.0,
+        "llm_used": true,
+        "llm_provider": "openai_compatible",
+        "elapsed_ms": 12995
+      },
+      "elapsed_ms": 13017
+    },
+    {
+      "task_id": "fc_011",
+      "question": "当前支持哪些渠道",
+      "workspace": "tdx_msg_bus_svr",
+      "original_workspace": "msg_gateway",
+      "session_id": "l0:fc_011",
+      "error": "",
+      "trace_id": "tr_da7d2313bbef4d53",
+      "answer_chars": 606,
+      "answer_excerpt": "当前工程支持两个消息渠道：**QT（企点）** 和 **IDeal**。  具体说明：  - **渠道取值与默认行为**：跨渠道批量发消息接口中，`channelType` 只接受 `QT` 和 `ideal`（大小写不敏感，服务内部会归一化为大写 `QT` 或小写 `ideal`）；不传或传空时默认按 `QT` 处理",
+      "citations": [
+        "docs/90-方案与历史/跨渠道批量发消息方案.md:9-18 (## 2. 设计目标)",
+        "proto/cross_channel_msg.go:112-123 (NormalizeCrossChannelMsgType)",
+        "docs/02-接口/跨渠道批量发消息接口文档.md:85-96 (### 1.4 校验规则)"
+      ],
+      "usage": {
+        "context_tokens": 1784,
+        "full_corpus_tokens": 302632,
+        "saved_tokens": 300848,
+        "saved_ratio": 0.9941,
+        "llm_used": true,
+        "llm_provider": "openai_compatible",
+        "elapsed_ms": 12467
+      },
+      "elapsed_ms": 12488
+    },
+    {
+      "task_id": "fc_017",
+      "question": "消息网关是怎么路由的",
+      "workspace": "tdx_msg_bus_svr",
+      "original_workspace": "msg_gateway",
+      "session_id": "l0:fc_017",
+      "error": "",
+      "trace_id": "tr_0abda6f77f1e4b18",
+      "answer_chars": 979,
+      "answer_excerpt": "# 消息网关的路由机制  **直接结论**：网关的路由发生在三个层面——按**渠道**选择下游（QD 走 HTTP、IDeal 走 WebSocket）、按**消息方向**区分链路（下行发送 vs 上行进 Kafka）、以及多实例部署下按**连接归属**转发到插件所在的实例。  **按渠道路由（下行）**：业务请求通过",
+      "citations": [
+        "docs/01-业务与架构/消息网关-业务概览.md:36-48 (## 3. 总体架构和消息流向)",
+        "docs/01-业务与架构/消息网关设计与业务介绍.md:7-19 (## 总体设计)",
+        "docs/04-消息与外部集成/IDeal WebSocket连接归属与内部转发设计.md:5-8 (## 1. 目的)"
+      ],
+      "usage": {
+        "context_tokens": 1892,
+        "full_corpus_tokens": 302632,
+        "saved_tokens": 300740,
+        "saved_ratio": 0.9937,
+        "llm_used": true,
+        "llm_provider": "openai_compatible",
+        "elapsed_ms": 16971
+      },
+      "elapsed_ms": 16998
+    }
+  ]
+}

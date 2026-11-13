@@ -1,0 +1,172 @@
+{
+  "generated_at": "2026-11-12 17:05:23",
+  "label_method": "auto_eval (非人工标注)",
+  "source_report": "loop/reports/l0_full.json",
+  "report_sha256": "333023647a0417e2809a5d7d36b0e9b3f4b8a3134717398245cfa2336dc0e955",
+  "cases_sha256": "b592be3ccf195f7a63bae751ed2636590f33c132d19a8ceca589f5a0cdda121a",
+  "runner_sha256": "f6cef87db2932ee9d17a10d02ea38729733c634a350bfdc124712d94e4fd5009",
+  "frozen_sha256": "2f17e0ab15cae9284cf06aac957d20bd985eecae1a1c41756028c193b5e44cdc",
+  "metrics": {
+    "count": 24,
+    "labeled": 0,
+    "intent_avg": 1.0,
+    "retrieval_avg": 0.542,
+    "presentation_avg": 1.0,
+    "layer_distribution": {
+      "retrieval": 12,
+      "ok": 12
+    },
+    "cases_without_trace": 0
+  },
+  "per_case": {
+    "fc_001": {
+      "intent": null,
+      "retrieval": 0.0,
+      "presentation": null,
+      "layer": "retrieval"
+    },
+    "fc_002": {
+      "intent": 1.0,
+      "retrieval": 0.0,
+      "presentation": null,
+      "layer": "retrieval"
+    },
+    "fc_003": {
+      "intent": 1.0,
+      "retrieval": 0.0,
+      "presentation": null,
+      "layer": "retrieval"
+    },
+    "fc_004": {
+      "intent": 1.0,
+      "retrieval": 0.0,
+      "presentation": 1.0,
+      "layer": "retrieval"
+    },
+    "fc_005": {
+      "intent": 1.0,
+      "retrieval": 1.0,
+      "presentation": 1.0,
+      "layer": "ok"
+    },
+    "fc_006": {
+      "intent": 1.0,
+      "retrieval": 1.0,
+      "presentation": 1.0,
+      "layer": "ok"
+    },
+    "fc_007": {
+      "intent": 1.0,
+      "retrieval": 1.0,
+      "presentation": 1.0,
+      "layer": "ok"
+    },
+    "fc_008": {
+      "intent": 1.0,
+      "retrieval": 0.0,
+      "presentation": null,
+      "layer": "retrieval"
+    },
+    "fc_009": {
+      "intent": 1.0,
+      "retrieval": 0.0,
+      "presentation": 1.0,
+      "layer": "retrieval"
+    },
+    "fc_010": {
+      "intent": 1.0,
+      "retrieval": 1.0,
+      "presentation": 1.0,
+      "layer": "ok"
+    },
+    "fc_011": {
+      "intent": 1.0,
+      "retrieval": 1.0,
+      "presentation": 1.0,
+      "layer": "ok"
+    },
+    "fc_012": {
+      "intent": 1.0,
+      "retrieval": 0.0,
+      "presentation": 1.0,
+      "layer": "retrieval"
+    },
+    "fc_013": {
+      "intent": 1.0,
+      "retrieval": 1.0,
+      "presentation": 1.0,
+      "layer": "ok"
+    },
+    "fc_014": {
+      "intent": 1.0,
+      "retrieval": 0.0,
+      "presentation": 1.0,
+      "layer": "retrieval"
+    },
+    "fc_015": {
+      "intent": 1.0,
+      "retrieval": 1.0,
+      "presentation": 1.0,
+      "layer": "ok"
+    },
+    "fc_016": {
+      "intent": 1.0,
+      "retrieval": 1.0,
+      "presentation": 1.0,
+      "layer": "ok"
+    },
+    "fc_017": {
+      "intent": 1.0,
+      "retrieval": 1.0,
+      "presentation": 1.0,
+      "layer": "ok"
+    },
+    "fc_018": {
+      "intent": 1.0,
+      "retrieval": 0.0,
+      "presentation": 1.0,
+      "layer": "retrieval"
+    },
+    "fc_019": {
+      "intent": 1.0,
+      "retrieval": 0.0,
+      "presentation": 1.0,
+      "layer": "retrieval"
+    },
+    "fc_020": {
+      "intent": 1.0,
+      "retrieval": 0.0,
+      "presentation": 1.0,
+      "layer": "retrieval"
+    },
+    "fc_021": {
+      "intent": null,
+      "retrieval": 1.0,
+      "presentation": 1.0,
+      "layer": "ok"
+    },
+    "fc_022": {
+      "intent": 1.0,
+      "retrieval": 1.0,
+      "presentation": 1.0,
+      "layer": "ok"
+    },
+    "fc_023": {
+      "intent": 1.0,
+      "retrieval": 1.0,
+      "presentation": 1.0,
+      "layer": "ok"
+    },
+    "fc_024": {
+      "intent": null,
+      "retrieval": 1.0,
+      "presentation": 1.0,
+      "layer": "retrieval"
+    }
+  },
+  "notes": [
+    "代理指标基线，仅作 L1 改动前的对照锚点。",
+    "标注已由 auto_evaluate.py 自行评估，未经人工核对。",
+    "L1 判定须多次采样取中位数，不可用单次分数做接受/回滚。"
+  ]
+}

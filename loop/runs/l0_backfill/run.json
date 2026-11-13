@@ -1,0 +1,222 @@
+{
+  "generated_at": "2026-11-12 16:07:23",
+  "cases": "D:\\tdx\\zq\\codelib\\loop\\failure_cases.draft.yaml",
+  "run_db": "loop\\runs\\l0_backfill\\codelib.db",
+  "llm_model": "workbuddy/glm-5.3",
+  "base_url_configured": true,
+  "workspaces": [
+    {
+      "id": "tdx_msg_bus_svr",
+      "name": "",
+      "path": "D:\\tdx\\zq\\code\\tdx_msg_bus_svr"
+    }
+  ],
+  "cleared_tables": [
+    "trace_event",
+    "trace",
+    "audit",
+    "conversations",
+    "qa_memory",
+    "facts",
+    "chat_sessions",
+    "auth_sessions"
+  ],
+  "count": 8,
+  "total_ms": 146918,
+  "results": [
+    {
+      "task_id": "fc_003",
+      "question": "你做什么的",
+      "workspace": "tdx_msg_bus_svr",
+      "session_id": "l0:fc_003",
+      "error": "",
+      "trace_id": "tr_a4282584cd814e54",
+      "answer_chars": 201,
+      "answer_excerpt": "现有知识库中没有找到能直接回答「你做什么的」的内容（证据覆盖度约 0%）。为避免臆测，这里不强行作答。 检索到的相近内容仅供定位参考：docs/01-业务与架构/消息网关-业务概览.md；docs/01-业务与架构/消息网关-业务概览.md；docs/05-部署与运维/运维DEV-OPS手册.md。 建议：换个更具体的",
+      "citations": [
+        "docs/01-业务与架构/消息网关-业务概览.md:20-28 (## 2. 业务上解决什么问题)",
+        "docs/01-业务与架构/消息网关-业务概览.md:1-4 (# tdx_msg_bus_svr 业务概览)",
+        "docs/05-部署与运维/运维DEV-OPS手册.md:360-370 (### 5.1 当前结论)"
+      ],
+      "usage": {
+        "context_tokens": 456,
+        "full_corpus_tokens": 302632,
+        "saved_tokens": 302176,
+        "saved_ratio": 0.9985,
+        "llm_used": false,
+        "llm_provider": "",
+        "elapsed_ms": 7075
+      },
+      "elapsed_ms": 7099
+    },
+    {
+      "task_id": "fc_004",
+      "question": "ideal渠道和qt渠道的接口实现是一致的吗",
+      "workspace": "tdx_msg_bus_svr",
+      "session_id": "l0:fc_004",
+      "error": "",
+      "trace_id": "tr_ed568f1cebfb4eaa",
+      "answer_chars": 778,
+      "answer_excerpt": "**结论：对外接口是统一的，但两个渠道的内部实现并不一致。**  具体来说：  - **对外层面一致**。网关通过统一聊天接口（单聊、群聊、关系查询、批量任务等）封装各渠道能力，上游调用方只需指定渠道类型（qt / ideal）和业务参数，不感知渠道差异。代码里对渠道类型做了统一归一化处理（大小写、空值缺省为 QT），",
+      "citations": [
+        "docs/01-业务与架构/消息网关设计与业务介绍.md:31-34 (### 通道适配)",
+        "docs/01-业务与架构/消息网关-业务概览.md:145-157 (## 6. 技术实现分层)",
+        "docs/01-业务与架构/消息网关设计与业务介绍.md:3-6 (## 业务定位)"
+      ],
+      "usage": {
+        "context_tokens": 1316,
+        "full_corpus_tokens": 302632,
+        "saved_tokens": 301316,
+        "saved_ratio": 0.9957,
+        "llm_used": true,
+        "llm_provider": "openai_compatible",
+        "elapsed_ms": 24520
+      },
+      "elapsed_ms": 24542
+    },
+    {
+      "task_id": "fc_005",
+      "question": "消息服务是如何启动的？入口在哪里？",
+      "workspace": "tdx_msg_bus_svr",
+      "session_id": "l0:fc_005",
+      "error": "",
+      "trace_id": "tr_c3026b05b51d4ca0",
+      "answer_chars": 1210,
+      "answer_excerpt": "**直接结论：** 消息服务的入口是 `main.go` 里的 `main()` 函数，从上到下完成加密、守护进程判断、各组件初始化、HTTP 服务启动，然后阻塞等待退出信号做收尾清理。进程层面由部署脚本 `msgbus_startup.sh` 拉起，支持 `start` / `stop` / `restart` / ",
+      "citations": [
+        "main.go:55-96 (main)"
+      ],
+      "usage": {
+        "context_tokens": 3530,
+        "full_corpus_tokens": 302632,
+        "saved_tokens": 299102,
+        "saved_ratio": 0.9883,
+        "llm_used": true,
+        "llm_provider": "openai_compatible",
+        "elapsed_ms": 21429
+      },
+      "elapsed_ms": 21458
+    },
+    {
+      "task_id": "fc_010",
+      "question": "消息网关收到上行消息后是怎么处理的？",
+      "workspace": "tdx_msg_bus_svr",
+      "session_id": "l0:fc_010",
+      "error": "",
+      "trace_id": "tr_c28048fcf24b4e50",
+      "answer_chars": 1054,
+      "answer_excerpt": "**直接结论：** 上行消息进入网关后，按渠道分两条入口——QD 走 `ctl.QDNlpMsgPush`，IDeal 插件的 WebSocket 消息经 `service/ws_message_service.go` 的 `OnMessage` 回调处理（涵盖单聊、群聊和业务事件）；两者都先落库保存接收流水（`dao",
+      "citations": [
+        "docs/01-业务与架构/消息网关-业务概览.md:93-101 (### 4.2 上行消息接收)",
+        "docs/01-业务与架构/消息网关-业务概览.md:51-63 (### 关键职责边界)",
+        "docs/01-业务与架构/消息网关-业务概览.md:29-35 (### 典型业务场景)"
+      ],
+      "usage": {
+        "context_tokens": 2152,
+        "full_corpus_tokens": 302632,
+        "saved_tokens": 300480,
+        "saved_ratio": 0.9929,
+        "llm_used": true,
+        "llm_provider": "openai_compatible",
+        "elapsed_ms": 23765
+      },
+      "elapsed_ms": 23796
+    },
+    {
+      "task_id": "fc_013",
+      "question": "它的入口在哪？",
+      "workspace": "tdx_msg_bus_svr",
+      "session_id": "l0:fc_013",
+      "error": "",
+      "trace_id": "tr_1adea9a156694980",
+      "answer_chars": 820,
+      "answer_excerpt": "**入口就是根目录 `main.go` 的 `main()` 函数。** 这是一个 Go 单入口服务，进程从这里启动，依次完成初始化后进入运行状态，最后阻塞等退出信号做收尾。  具体启动流程（按代码执行顺序）：  1. **基础准备**：`crypt.Init()` 初始化加密、随机种子、`flag.Parse()` ",
+      "citations": [
+        "main.go:55-96 (main)"
+      ],
+      "usage": {
+        "context_tokens": 3127,
+        "full_corpus_tokens": 302632,
+        "saved_tokens": 299505,
+        "saved_ratio": 0.9897,
+        "llm_used": true,
+        "llm_provider": "openai_compatible",
+        "elapsed_ms": 19778
+      },
+      "elapsed_ms": 19806
+    },
+    {
+      "task_id": "fc_014",
+      "question": "消息网关收到一条上行消息后，是怎么一步步处理的？",
+      "workspace": "tdx_msg_bus_svr",
+      "session_id": "l0:fc_014",
+      "error": "",
+      "trace_id": "tr_dddff655cf13485f",
+      "answer_chars": 821,
+      "answer_excerpt": "**直接结论：** 依据本工程的概览文档，一条上行消息进入网关后的处理链路是：渠道（QD 推送或 IDeal 插件上报）→ 网关接收 → 按消息类型补全发送人、接收人、机构与账号关联信息 → 投递到对应 Kafka Topic → 下游（NLP Worker 或其他业务）消费并落库。这是“渠道上报 → 网关接收 → K",
+      "citations": [
+        "docs/01-业务与架构/消息网关-业务概览.md:93-101 (### 4.2 上行消息接收)",
+        "docs/01-业务与架构/消息网关-业务概览.md:51-63 (### 关键职责边界)",
+        "docs/01-业务与架构/消息网关-业务概览.md:5-17 (## 1. 一句话认识消息网关)"
+      ],
+      "usage": {
+        "context_tokens": 2296,
+        "full_corpus_tokens": 302632,
+        "saved_tokens": 300336,
+        "saved_ratio": 0.9924,
+        "llm_used": true,
+        "llm_provider": "openai_compatible",
+        "elapsed_ms": 18738
+      },
+      "elapsed_ms": 18768
+    },
+    {
+      "task_id": "fc_015",
+      "question": "这个工程是做什么的，主要解决什么问题",
+      "workspace": "tdx_msg_bus_svr",
+      "session_id": "l0:fc_015",
+      "error": "",
+      "trace_id": "tr_1164923330e3427a",
+      "answer_chars": 763,
+      "answer_excerpt": "这个工程 `tdx_msg_bus_svr` 是一个**消息网关服务**（Go 单入口后端服务），定位是业务系统与即时通信渠道之间的统一接入层。它解决的核心问题是：上游业务系统原本需要分别适配企点（QD）和 IDeal 两个渠道的调用方式、账号体系、在线状态和返回格式，这个网关把这些差异集中收敛，对上游提供一套统一的能",
+      "citations": [
+        "docs/01-业务与架构/消息网关-业务概览.md:20-28 (## 2. 业务上解决什么问题)",
+        "docs/01-业务与架构/消息网关-业务概览.md:1-4 (# tdx_msg_bus_svr 业务概览)",
+        "docs/01-业务与架构/消息网关-业务概览.md:5-17 (## 1. 一句话认识消息网关)"
+      ],
+      "usage": {
+        "context_tokens": 4154,
+        "full_corpus_tokens": 302632,
+        "saved_tokens": 298478,
+        "saved_ratio": 0.9863,
+        "llm_used": true,
+        "llm_provider": "openai_compatible",
+        "elapsed_ms": 13459
+      },
+      "elapsed_ms": 13488
+    },
+    {
+      "task_id": "fc_016",
+      "question": "你支持哪些消息渠道",
+      "workspace": "tdx_msg_bus_svr",
+      "session_id": "l0:fc_016",
+      "error": "",
+      "trace_id": "tr_e90bb3d368e045a7",
+      "answer_chars": 578,
+      "answer_excerpt": "支持两个消息渠道：**QT（企点/QD）和 ideal（IDeal）**。  具体来说，本工程是统一消息网关，屏蔽企点和 IDeal 两个即时通信渠道在协议和账号体系上的差异，对外提供统一的消息发送、通讯录查询等能力。业务请求通过 HTTP 进入后按渠道路由：QT 走企点 HTTP 服务，ideal 走 IDeal W",
+      "citations": [
+        "proto/cross_channel_msg_test.go:5-20 (TestNormalizeCrossChannelMsgType)"
+      ],
+      "usage": {
+        "context_tokens": 2645,
+        "full_corpus_tokens": 302632,
+        "saved_tokens": 299987,
+        "saved_ratio": 0.9913,
+        "llm_used": true,
+        "llm_provider": "openai_compatible",
+        "elapsed_ms": 17924
+      },
+      "elapsed_ms": 17956
+    }
+  ]
+}

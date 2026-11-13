@@ -41,6 +41,12 @@ def _expand_query(q_tokens: List[str]) -> List[str]:
         for key, vals in _SYNONYMS.items():
             if t == key or (len(t) >= 1 and (t in key or key in t)):
                 extra.extend(vals)
+    # 自循环学到的动态映射（热读、空表零影响、异常静默降级）
+    try:
+        from .lexicon import default_store
+        extra.extend(default_store().expand(q_tokens))
+    except Exception:
+        pass
     return extra
 
 

@@ -14,8 +14,16 @@ from app.research.evidence import EvidenceBoard
 from app.research.profiles import PLANNER_ROLE, READER_ROLE, READER_TOOLS, VERIFIER_ROLE
 from app.research.tools import ResearchTools
 
-DEFAULT_LIMITS = {"max_steps": 20, "max_chars": 40000, "max_llm_calls": 16,
-                  "max_wall_ms": 300000}
+# 数值对齐 kimi 的理念：步数是防呆（其 maxStepsPerTurn 默认不限制），资源控制靠
+# 上下文压缩与 token 预算；顺序题实测需追 3~4 层调用链（16 次调用不够，见 R2.5）。
+# 后续演进方向：max_llm_calls 换成 token 预算（estimate_tokens 估算累计输入），
+# 上下文满 85% 自动压缩——对应 kimi compaction 的 triggerRatio 0.85。
+# 分层语义（对齐 kimi）：步数=防呆，0=不限（kimi maxStepsPerTurn 默认即不限）；
+# 资源控制主力=repeat_breaker（无进展熔断），chars=compaction 落地前的临时保护；
+# wall_clock=无人值守的最后保险丝（没有人工刹车，必须保留硬停）。
+# 计费/配额属部署层（见 integration-plan §16），不在 loop 层。
+DEFAULT_LIMITS = {"max_steps": 0, "max_chars": 60000, "max_llm_calls": 0,
+                      "max_wall_ms": 600000}
 STOP_FILE = Path(__file__).resolve().parents[1] / "loop" / "STOP"
 
 
@@ -77,7 +85,7 @@ async def run_research(question: str, llm, tools: ResearchTools,
             cards = []
     t0 = time.time()
     findings: list = []      # driver 外置保存的工具输出（final 的证据来源）
-    stop_reason = "steps_exhausted"
+    stop_reason = "wall_or_budget"   # while 正常退出时不会用到；0=不限由 wall 兜底
 
     board = await plan(question, llm)
     tools.board = board
@@ -91,8 +99,9 @@ async def run_research(question: str, llm, tools: ResearchTools,
                             {"role": "user", "content": question + ((chr(10) * 2 + card_text) if card_text else "")}]
     specs = tools.tool_specs(READER_TOOLS)
     steps = llm_calls = chars = 0
+    step_cap = int(lim["max_steps"]); step = 0
     final_text = ""
-    for step in range(int(lim["max_steps"])):
+    while step_cap == 0 or step < step_cap:
         if _stopped():
             stop_reason = "stop_file"; break
         messages = _trim_messages(messages, board.render())
@@ -104,7 +113,7 @@ async def run_research(question: str, llm, tools: ResearchTools,
         except Exception as e:
             stop_reason = f"llm_error:{type(e).__name__}"; break
         llm_calls += 1
-        steps += 1
+        step += 1
         tcs = resp.get("tool_calls") or []
         last_assistant_text = resp.get("content") or ""
         if tracer:
@@ -128,7 +137,7 @@ async def run_research(question: str, llm, tools: ResearchTools,
             stop_reason = "chars_exhausted"; break
         if (time.time() - t0) * 1000 > int(lim["max_wall_ms"]):
             stop_reason = "wall_time"; break
-        if llm_calls >= int(lim["max_llm_calls"]):
+        if int(lim["max_llm_calls"]) > 0 and llm_calls >= int(lim["max_llm_calls"]):
             stop_reason = "llm_calls"; break
 
     # 最终交付：全新短上下文（丢工具轨迹——Kimi compaction 语义），防 JSON 被 4096 截断

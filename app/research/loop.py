@@ -60,9 +60,20 @@ async def plan(question: str, llm) -> EvidenceBoard:
 
 
 async def run_research(question: str, llm, tools: ResearchTools,
-                       limits: dict | None = None, tracer=None) -> dict:
+                       limits: dict | None = None, tracer=None,
+                       kb_path=None, workspace: str = "",
+                       memory_cfg: dict | None = None) -> dict:
     lim = {**DEFAULT_LIMITS, **(limits or {})}
     board = tools.board
+    cards: list = []
+    card_text = ""
+    if kb_path and workspace:
+        try:
+            from .memory import search_cards, render_cards
+            cards = search_cards(kb_path, workspace, question)
+            card_text = render_cards(cards) if cards else ""
+        except Exception:
+            cards = []
     t0 = time.time()
     findings: list = []      # driver 外置保存的工具输出（final 的证据来源）
     stop_reason = "steps_exhausted"
@@ -74,7 +85,7 @@ async def run_research(question: str, llm, tools: ResearchTools,
 
     system = READER_ROLE
     messages: list[dict] = [{"role": "system", "content": system},
-                            {"role": "user", "content": question}]
+                            {"role": "user", "content": question + ((chr(10) * 2 + card_text) if card_text else "")}]
     specs = tools.tool_specs(READER_TOOLS)
     steps = llm_calls = chars = 0
     final_text = ""
@@ -123,8 +134,8 @@ async def run_research(question: str, llm, tools: ResearchTools,
     fparts = []
     for fi, f in enumerate(findings):
         if f["tool"] in ("read_body", "read_lines", "expand_chain", "grep_code") and f["output"]:
-            fparts.append("[" + str(fi + 1) + "] " + f["tool"] + " " + f["args"][:120] + chr(10) + f["output"][:800])
-    findings_text = (chr(10) * 2).join(fparts[-14:]) if fparts else "（无）"
+            fparts.append("[" + str(fi + 1) + "] " + f["tool"] + " " + f["args"][:120] + chr(10) + f["output"][:600])
+    findings_text = (chr(10) * 2).join(fparts[-10:]) if fparts else "（无）"
     parts = ["用户问题：" + question, "", "断言板：", board.render(), "",
              "工具返回的代码证据（引用时必须用这里的真实 path :: symbol）：",
              findings_text, "",
@@ -142,7 +153,7 @@ async def run_research(question: str, llm, tools: ResearchTools,
                 [{"role": "system",
                   "content": READER_ROLE + chr(10) + "现在是最终交付阶段：不要调用工具，只输出 JSON。"},
                  {"role": "user", "content": final_user}],
-                max_tokens=8192)
+                max_tokens=4096)
             llm_calls += 1
             final_text = resp.get("content") or ""
             final_json = extract_json(final_text) or {}
@@ -165,6 +176,17 @@ async def run_research(question: str, llm, tools: ResearchTools,
                     refs.append({"symbol": ms, "path": mp, "quote": ""})
         final_json["evidence"] = refs
 
+    cards_saved: list = []
+    if kb_path and workspace:
+        try:
+            from .memory import save_cards
+            mc = memory_cfg or {}
+            cards_saved = await save_cards(llm, kb_path, workspace, question, {"conclusions": final_json.get("conclusions", []), "evidence": final_json.get("evidence", []), "board_dump": board.dump()},
+                                           max_cards=int(mc.get("max_cards_per_run", 3)),
+                                           disable_write=bool(mc.get("disable_write", False)))
+        except Exception as e:
+            cards_saved = ["save_failed:" + type(e).__name__ + ":" + str(e)[:100]]
+
     return {
         "question": question, "answer": final_json.get("answer", ""),
         "conclusions": final_json.get("conclusions", []),
@@ -175,4 +197,5 @@ async def run_research(question: str, llm, tools: ResearchTools,
         "stop_reason": stop_reason, "wall_ms": int((time.time() - t0) * 1000),
         "tool_events": tools.event_log,
         "fingerprint": None,
+        "cards_injected": len(cards), "cards_saved": cards_saved,
     }

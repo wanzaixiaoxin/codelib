@@ -66,13 +66,31 @@ def main() -> int:
     if not llm.available:
         print("LLM 不可用")
         return 1
-    board = EvidenceBoard()
-    tools = ResearchTools(KB, WS, str(WS_ROOT), board)
-    t0 = time.time()
-    try:
-        result = asyncio.run(run_research(QUESTION, llm, tools))
-    finally:
-        tools.close()
+    runs = int(sys.argv[sys.argv.index("--runs") + 1]) if "--runs" in sys.argv else 2
+    results = []
+    for run_no in range(1, runs + 1):
+        board = EvidenceBoard()
+        tools = ResearchTools(KB, WS, str(WS_ROOT), board)
+        t0 = time.time()
+        try:
+            result = asyncio.run(run_research(QUESTION, llm, tools,
+                                              kb_path=KB, workspace=WS,
+                                              memory_cfg={"max_cards_per_run": 3,
+                                                          "disable_write": False}))
+            result["run_no"] = run_no
+        finally:
+            tools.close()
+        results.append(result)
+        print(f"--- 第 {run_no} 次运行: stop={result['stop_reason']} "
+              f"cards_injected={result['cards_injected']} "
+              f"cards_saved={result['cards_saved']} ---")
+    result = results[-1]
+    first_cards = results[0].get("cards_injected", 0)
+    check_cross = (results[0].get("cards_saved") and
+                   any(str(x).startswith(("created", "updated")) for x in results[0]["cards_saved"]))
+    result["cross_session_hits"] = results[-1].get("cards_injected", 0)
+    # (t0 沿用两跑起点)
+
     print(f"耗时 {result['wall_ms']}ms | steps={result['steps']} llm_calls={result['llm_calls']} "
           f"chars={result['chars']} stop={result['stop_reason']}")
     print("断言板:", result["board"])

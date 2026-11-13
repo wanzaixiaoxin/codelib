@@ -3,8 +3,8 @@
  "verdict": "PASS",
  "ok": [
   "结构化结论",
-  "证据含 .go 源码 12 处",
-  "关键机制词 ['分区', 'key', 'HashPartitioner', '幂等', '乱序', '顺序']",
+  "证据含 .go 源码 7 处",
+  "关键机制词 ['分区', 'key', 'goroutine', '幂等', '乱序', '顺序']",
   "无「候选未覆盖」免责",
   "open 断言显式列出 5 条",
   "预算内完成（stop=llm_calls，final 交付完整）"
@@ -12,160 +12,183 @@
  "bad": [],
  "result": {
   "question": "分析当两个人的对话数据进入kafka后被我们消费，到最后写入kafka，对话的顺序能保证吗",
-  "answer": "结论：不能给出完整的顺序保证承诺，顺序保证只在不发生发送重试的'理想路径'下成立，整体链条上存在明确的乱序风险点。分环节说明：\n\n1. 生产端（对话数据进入 Kafka）：业务代码在 service/kafka_service.go::sendGatwayNlpRawMsgNtfToKafka 中用 \"nlp_发起方_接收方\" 构造了能唯一标识一场对话的 key，看起来意图是按对话分区；但 service/kafka_service.go::sendDataToKafka 里把 `msg.Partition` 硬编码为 0，且 kafka_client/kafka_producer_client.go::AsyncSendMessage 会把这个 Partition 直接写进 sarama.ProducerMessage——sarama 在指定了分区号时会绕过 kafka_client/kafka_producer_client.go::newKafkaProducerClient 中配置的 NewHashPartitioner。结果是：所有对话全部写入分区 0。副作用是'同一场对话一定在同一分区'，Kafka 分区内本身保持写入顺序，这一点对顺序有利；但代价是吞吐完全无法水平扩展，且这更像是配置遗留而非有意设计。\n\n2. 发送可靠性：发送走的是异步生产者（kafka_client/kafka_producer_client.go::AsyncSendMessage 投递到 Input channel），生产者配置中只有 `WaitForLocal` ack、没有开启幂等生产者（Idempotent）也没有 MaxOpenRequests=1（见 kafka_client/kafka_producer_client.go::newKafkaProducerClient）。sarama 异步生产者在消息失败重试时，同分区内的消息可能乱序到达 broker——这是链条上第一个明确的乱序风险点。\n\n3. 消费端：消费者以消费组模式启动（kafka_client/kafka_consumer_client.go::newKafkaConsumerClient），且 `Offsets.Initial = OffsetNewest`（服务重启会从最新开始，可能丢掉重启前未消费的消息）。由于所有消息都在分区 0，同组内只会有一个实例消费到该分区，跨实例并行消费同一对话的风险事实上被规避。但消费侧是否逐条串行处理、失败重试是否保序，本次因 grep 工具持续报错（ESCAPE expression must be a single character），未能读到 ConsumeClaim/Handler 实现，无法确认——这是链条上无法验证的环节。\n\n4. 写回 Kafka：写回同样走 service/kafka_service.go::sendDataToKafka，同样固定 Partition=0，'同一会话写回同一分区'这一点成立，分区内的相对顺序同样只取决于写入顺序；写回也走同一个非幂等的异步生产者，同样存在重试乱序风险。\n\n总结：在'消息发送不发生重试'的正常路径下，从消费到写回，同一场对话的消息都在分区 0 内，顺序可以保持。但生产者未启用幂等模式，异步重试可能导致同分区内乱序；消费端的串行处理与失败重试逻辑本次未能读到代码，无法确认其保序性。若业务要求严格的对话顺序，建议：(a) 去掉硬编码 Partition=0，改用按会话 key 哈希分区（分区器已配置，只是被 Partition 字段覆盖）；(b) 开启 sarama 的 Producer.Idempotent = true 并设置 MaxOpenRequests = 1；(c) 补充核查消费端 ConsumeClaim 的处理与重试实现。",
+  "answer": "基于本次读到的代码，只能给出『有条件的结论』：\n\n**能保序的部分**：消费端用的是 sarama ConsumerGroup（kafka_client/kafka_consumer_client.go :: KafkaConsumerClient）。Kafka 的天然语义是『分区内有序』，所以只要同一对话的多条消息进的是同一个分区，消费端从该分区读到的顺序就与写入顺序一致，这一段是安全的。\n\n**不确定/有风险的部分**：\n1. **写入端是关键短板**。kafka_client/kafka_producer_client.go :: KafkaProducerClient.AsyncSendMessage 只是把调用方传入的 msg.Key 和 msg.Partition 原样塞进 ProducerMessage——client 层自己不做任何『按对话路由到固定分区』的处理。也就是说，是否保序完全取决于业务代码是否对同一对话固定了相同的 Key（如 conversationId）或相同 Partition。本次没有读到业务侧给 Key 赋值的代码，这是最大的缺口。\n2. **Async 是异步发送**：消息丢进 s.producer.Input() 后函数立即返回。如果同一对话的多条消息是在不同 goroutine 里先后调用 AsyncSendMessage，发送完成顺序与调用顺序可能不一致；若未开启幂等 producer 且 retries>0、同分区多条 in-flight，sarama 的重试还可能造成同分区内乱序。本次未读到 producer 的 sarama.Config，无法确认幂等配置。\n3. **消费处理逻辑未确认**：consumerGroupHandler 的 ConsumeClaim 方法体本次没有读到（多次读取都只返回文件前 121 行且内容截断），无法排除 handler 内部又起了 goroutine/线程池并发处理同一对话的多条消息后再各自回写 Kafka——若存在这种并发，回写顺序必然不保证。\n\n**结论**：在『上游对同一对话固定 Key、消费 handler 同步逐条处理、直接回写』的前提下，链路能保序；但当前已读到的代码中，这三个前提没有一个被代码强制保证——AsyncSendMessage 对 Key 零处理 + 异步返回，意味着一旦业务侧 Key 不固定或处理侧有并发，顺序就会破坏。建议主 agent 继续补查：①业务侧构造 Message 时 Key 的赋值处；②consumerGroupHandler.ConsumeClaim 方法体；③producer 初始化时的 sarama.Config。",
   "conclusions": [
-   "生产端写入 Kafka 时并未按会话 key 哈希分区，而是把所有消息的分区硬编码为 0（service/kafka_service.go::sendDataToKafka 中 `msg.Partition = 0`），这使得所有对话（不只是同一场对话）都进入同一分区，从 Kafka 分区层面看同一场对话的消息必然在同一个分区内，分区内的相对顺序取决于发送顺序。",
-   "虽然消息携带了 key（如 service/kafka_service.go::sendGatwayNlpRawMsgNtfToKafka 中 `key := fmt.Sprintf(\"nlp_%s_%s\", msg.From, msg.To)`，能标识一个对话对），且生产者配置了 `sarama.NewHashPartitioner`（kafka_client/kafka_producer_client.go::newKafkaProducerClient），但 kafka_client/kafka_producer_client.go::AsyncSendMessage 显式设置了 `Partition: msg.Partition`（即 0），sarama 会直接使用指定分区，HashPartitioner 实际不生效。",
-   "生产者是异步发送（kafka_client/kafka_producer_client.go::AsyncSendMessage 通过 `s.producer.Input() <- message` 投递），且 kafka_client/kafka_producer_client.go::newKafkaProducerClient 的配置中没有开启 Idempotent/幂等生产者，也没有配置 WaitForAll acks（仅 `WaitForLocal`），异步生产者在消息发送失败重试时可能产生同分区内乱序，这一层顺序保证存在风险。",
-   "消费者初始化使用 `sarama.NewConsumerGroup` 并配置 `OffsetNewest`（kafka_client/kafka_consumer_client.go::newKafkaConsumerClient），属于消费组模式；由于所有消息都在分区 0，同组内最多只有一个消费者实例能消费到该分区，跨实例并行消费同一会话的风险因单分区而被规避，但这同时意味着消费吞吐受限且失去水平扩展能力。",
-   "消费端是否串行逐条处理消息、失败重试是否会打乱顺序，本次未读到任何 ConsumeClaim/Handler 实现代码（grep 工具持续报 `ESCAPE expression must be a single character` 错误，多次尝试均失败），无法下结论。"
+   "消费端使用 sarama ConsumerGroup + consumerGroupHandler 模式（kafka_client/kafka_consumer_client.go :: KafkaConsumerClient），Kafka 分区本身保证同一分区内消息有序，因此同一对话只要落在同一分区，消费侧按 claim 顺序读取是保序的",
+   "但代码中存在 KafkaConsumerClient 并非唯一入口，还需结合 handler 的 ConsumeClaim 实现确认是否同步逐条处理（kafka_client/kafka_consumer_client.go :: consumerGroupHandler，本次仅读到文件前 121 行，handler 主体未读到）",
+   "发送端 AsyncSendMessage 直接把 msg.Partition 和 msg.Key 原样写入 ProducerMessage（kafka_client/kafka_producer_client.go :: KafkaProducerClient.AsyncSendMessage），即是否保序完全取决于业务侧是否为同一对话固定传相同的 Key 或 Partition——这是整个链路的关键开关",
+   "AsyncSendMessage 是异步发送（消息写入 s.producer.Input() 通道后立即返回，kafka_client/kafka_producer_client.go :: KafkaProducerClient.AsyncSendMessage），若同一对话的多条消息在不同 goroutine 中调用它，且 producer 未配置 Idempotent/按 key 序列化发送，则到达 Kafka 的先后顺序不保证",
+   "未见对 max.in.flight.requests.per.connection、retries、幂等 producer 的任何设置（kafka_client/kafka_producer_client.go :: KafkaProducerClient），sarama 默认 retries>0 且非幂等时，同分区多条 in-flight 消息重试可能发生乱序"
   ],
   "evidence": [
    {
-    "symbol": "sendDataToKafka",
-    "path": "service/kafka_service.go",
-    "quote": "msg.Partition = 0; msg.Key = key; client.AsyncSendMessage(&msg, &meta)"
-   },
-   {
-    "symbol": "sendGatwayNlpRawMsgNtfToKafka",
-    "path": "service/kafka_service.go",
-    "quote": "key := fmt.Sprintf(\"nlp_%s_%s\", msg.From, msg.To); sendDataToKafka(def.NLP_RAW_MSG_NTF, key, msg)"
-   },
-   {
-    "symbol": "newKafkaProducerClient",
-    "path": "kafka_client/kafka_producer_client.go",
-    "quote": "config.Producer.RequiredAcks = sarama.RequiredAcks(sarama.WaitForLocal); config.Producer.Partitioner = sarama.NewHashPartitioner"
-   },
-   {
-    "symbol": "AsyncSendMessage",
-    "path": "kafka_client/kafka_producer_client.go",
-    "quote": "message := &sarama.ProducerMessage{Topic: topic, Partition: msg.Partition, Value: sarama.StringEncoder(msg.Data), Key: sarama.StringEncoder(msg.Key)}; s.producer.Input() <- message"
-   },
-   {
-    "symbol": "newKafkaConsumerClient",
+    "symbol": "KafkaConsumerClient",
     "path": "kafka_client/kafka_consumer_client.go",
-    "quote": "config.Consumer.Offsets.Initial = sarama.OffsetNewest; client.consumerGroup, err = sarama.NewConsumerGroup(addr, group_id, config)"
+    "quote": "type KafkaConsumerClient struct { ClusterID uint64; Addr []string; Topics []string; sarama.Client; consumerGroup sarama.ConsumerGroup; shutdown chan os.Signal; consumerGroupHandler ..."
+   },
+   {
+    "symbol": "KafkaProducerClient.AsyncSendMessage",
+    "path": "kafka_client/kafka_producer_client.go",
+    "quote": "message := &sarama.ProducerMessage{ Topic: topic, Partition: msg.Partition, Value: sarama.StringEncoder(msg.Data), Key: sarama.StringEncoder(msg.Key), Metadata: meta_data }; s.producer.Input() <- message"
    }
   ],
   "open_assertions": [
-   "断言1：消费者对分区内消息是单线程串行处理还是并发处理——本次未读到 ConsumeClaim / 消费 Handler 的实现代码，grep 工具多次执行失败（ESCAPE expression must be a single character），缺口为消费回调的具体逻辑。",
-   "断言2：消费失败或重试时是否会打乱同一对话内的顺序——本次未读到任何重试/重入队相关代码，缺口为消费失败处理逻辑。",
-   "断言4：生产者未配置 sarama 的 Producer.Idempotent = true 与 MaxOpenRequests = 1（已读到的 kafka_client/kafka_producer_client.go::newKafkaProducerClient 中没有这些配置），但本次未读到其他可能覆盖此配置的初始化路径，无法排除别处设置的可能。",
-   "断言5：消费组内多实例的分区分配逻辑——本次未读到 consumer group 的订阅与 rebalance 代码（如 kafka_client/kafka_consumer_client.go::newKafkaConsumerClient 的后半段被截断），仅能依据'全部分区为 0'间接推断单分区只会有一个消费者。",
-   "grep 检索工具在本会话中持续失败（工具返回 [2][11][12][15][17] 均报 OperationalError: ESCAPE expression must be a single character），导致无法通过全局搜索定位消费处理入口、重试逻辑和 topic 写回调用点。"
+   "consumerGroupHandler 的 ConsumeClaim / Cleanup / Setup 方法体未读到（kafka_client/kafka_consumer_client.go 第 22 行之后的内容，多次工具调用均只返回到第 121 行且内容被截断），无法确认消费处理是否同步逐条、是否在处理中启动了 goroutine 或线程池",
+   "MarkOffset / MarkOffset 的提交策略（手动提交 vs enable.auto.commit 等价配置、Rebalance 策略）未读到，grep 查询因工具正则报错全部失败",
+   "业务侧调用 AsyncSendMessage 时对 Key/Partition 的赋值逻辑未读到——即是否对同一对话固定 Key（如 key=conversationId 或两人会话标识）这一最关键事实本次未确认",
+   "Producer 的 sarama.Config（retries、max.in.flight.requests.per.connection、Idempotent、Return.Successes 等）未读到，无法确认是否启用了幂等 producer（幂等开启时可保证同分区内 in-flight 重试不乱序）",
+   "处理链路中是否存在异步下游调用 / 异步 DB 写入后回调再发送 Kafka 的代码未读到（未定位到 worker/业务处理入口文件）"
   ],
   "board": {
    "open": 6
   },
   "steps": 8,
   "llm_calls": 9,
-  "chars": 6396,
+  "chars": 18319,
   "stop_reason": "llm_calls",
-  "wall_ms": 170797,
+  "wall_ms": 80517,
   "tool_events": [
    {
     "tool": "search_symbols",
-    "args": "{\"limit\": 30, \"query\": \"kafka\"}",
+    "args": "{\"limit\": 30, \"query\": \"KafkaConsumer\"}",
+    "chars": 271,
+    "rejected": ""
+   },
+   {
+    "tool": "search_symbols",
+    "args": "{\"limit\": 30, \"query\": \"Kafka\"}",
     "chars": 1058,
     "rejected": ""
    },
    {
     "tool": "grep_code",
-    "args": "{\"limit\": 30, \"pattern\": \"Kafka\"}",
+    "args": "{\"limit\": 40, \"pattern\": \"@KafkaListener\"}",
     "chars": 69,
     "rejected": ""
    },
    {
     "tool": "read_body",
-    "args": "{\"symbol\": \"sendDataToKafka\"}",
-    "chars": 522,
+    "args": "{\"max_chars\": 6000, \"symbol\": \"kafka_client.newKafkaConsumerClient\"}",
+    "chars": 50,
     "rejected": ""
    },
    {
     "tool": "read_body",
-    "args": "{\"symbol\": \"sendGatwayNlpRawMsgNtfToKafka\"}",
-    "chars": 237,
+    "args": "{\"max_chars\": 6000, \"symbol\": \"kafka_client.newKafkaProducerClient\"}",
+    "chars": 50,
     "rejected": ""
    },
    {
     "tool": "read_body",
-    "args": "{\"symbol\": \"sendGatwayNlpRawMsgNtfToKafka\"}",
-    "chars": 237,
+    "args": "{\"max_chars\": 6000, \"symbol\": \"service.sendDataToKafka\"}",
+    "chars": 38,
     "rejected": ""
    },
    {
     "tool": "read_body",
-    "args": "{\"symbol\": \"newKafkaProducerClient\"}",
+    "args": "{\"max_chars\": 6000, \"symbol\": \"service.sendGatwayNlpRawMsgNtfToKafka\"}",
+    "chars": 52,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"max_chars\": 8000, \"symbol\": \"newKafkaConsumerClient\"}",
+    "chars": 1037,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"max_chars\": 8000, \"symbol\": \"newKafkaProducerClient\"}",
     "chars": 1064,
     "rejected": ""
    },
    {
     "tool": "read_body",
-    "args": "{\"symbol\": \"newKafkaConsumerClient\"}",
-    "chars": 1037,
+    "args": "{\"max_chars\": 8000, \"symbol\": \"sendDataToKafka\"}",
+    "chars": 522,
     "rejected": ""
    },
    {
     "tool": "read_body",
-    "args": "{\"symbol\": \"newKafkaConsumerClient\"}",
-    "chars": 1037,
+    "args": "{\"max_chars\": 8000, \"symbol\": \"sendGatwayNlpRawMsgNtfToKafka\"}",
+    "chars": 237,
     "rejected": ""
    },
    {
     "tool": "read_body",
-    "args": "{\"symbol\": \"GetKafkaProducerClient\"}",
-    "chars": 137,
+    "args": "{\"max_chars\": 6000, \"symbol\": \"sendGatwayNlpRawMsgNtfToKafka\"}",
+    "chars": 237,
     "rejected": ""
    },
    {
     "tool": "read_body",
-    "args": "{\"symbol\": \"kafka_client.KafkaConsumerClient\"}",
-    "chars": 47,
-    "rejected": ""
-   },
-   {
-    "tool": "grep_code",
-    "args": "{\"limit\": 20, \"pattern\": \"ConsumeClaim\"}",
-    "chars": 69,
-    "rejected": ""
-   },
-   {
-    "tool": "grep_code",
-    "args": "{\"limit\": 20, \"pattern\": \"ConsumeClaim\"}",
-    "chars": 69,
-    "rejected": ""
-   },
-   {
-    "tool": "search_symbols",
-    "args": "{\"limit\": 10, \"query\": \"AsyncSendMessage\"}",
-    "chars": 67,
-    "rejected": ""
-   },
-   {
-    "tool": "search_symbols",
-    "args": "{\"limit\": 10, \"query\": \"AsyncSendMessage\"}",
-    "chars": 67,
-    "rejected": ""
-   },
-   {
-    "tool": "grep_code",
-    "args": "{\"limit\": 20, \"pattern\": \"Handler\"}",
-    "chars": 69,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
-    "args": "{\"symbol\": \"AsyncSendMessage\"}",
+    "args": "{\"max_chars\": 8000, \"symbol\": \"AsyncSendMessage\"}",
     "chars": 541,
     "rejected": ""
    },
    {
     "tool": "grep_code",
-    "args": "{\"limit\": 15, \"pattern\": \"ConsumerClaim\"}",
+    "args": "{\"limit\": 40, \"pattern\": \"ConsumeClaim\"}",
     "chars": 69,
+    "rejected": ""
+   },
+   {
+    "tool": "grep_code",
+    "args": "{\"limit\": 40, \"pattern\": \"MarkMessage\"}",
+    "chars": 69,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"max_chars\": 10000, \"symbol\": \"kafka_client.KafkaConsumerClient\"}",
+    "chars": 47,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"max_chars\": 10000, \"symbol\": \"kafka_client.KafkaProducerClient\"}",
+    "chars": 47,
+    "rejected": ""
+   },
+   {
+    "tool": "grep_code",
+    "args": "{\"limit\": 40, \"pattern\": \"Consume\"}",
+    "chars": 69,
+    "rejected": ""
+   },
+   {
+    "tool": "grep_code",
+    "args": "{\"limit\": 40, \"pattern\": \"MarkOffset\"}",
+    "chars": 69,
+    "rejected": ""
+   },
+   {
+    "tool": "read_lines",
+    "args": "{\"end\": 200, \"path\": \"kafka_client/kafka_consumer_client.go\", \"start\": 1}",
+    "chars": 4241,
+    "rejected": ""
+   },
+   {
+    "tool": "read_lines",
+    "args": "{\"end\": 250, \"path\": \"kafka_client/kafka_consumer_client.go\", \"start\": 1}",
+    "chars": 4241,
+    "rejected": ""
+   },
+   {
+    "tool": "read_lines",
+    "args": "{\"end\": 250, \"path\": \"kafka_client/kafka_consumer_client.go\", \"start\": 1}",
+    "chars": 4241,
     "rejected": ""
    }
   ],
-  "fingerprint": null
+  "fingerprint": null,
+  "cards_injected": 5,
+  "cards_saved": [
+   "updated",
+   "updated",
+   "updated"
+  ],
+  "run_no": 2,
+  "cross_session_hits": 5
  }
 }

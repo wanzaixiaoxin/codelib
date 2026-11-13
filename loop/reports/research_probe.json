@@ -1,0 +1,201 @@
+{
+ "question": "分析当两个人的对话数据进入kafka后被我们消费，到最后写入kafka，对话的顺序能保证吗",
+ "verdict": "FAIL",
+ "ok": [
+  "无「候选未覆盖」免责",
+  "open 断言显式列出 6 条"
+ ],
+ "bad": [
+  "无结构化结论",
+  "证据 .go 仅 0 处（<3）",
+  "关键机制词过少 []",
+  "异常终止 llm_calls（无完整交付）"
+ ],
+ "result": {
+  "question": "分析当两个人的对话数据进入kafka后被我们消费，到最后写入kafka，对话的顺序能保证吗",
+  "answer": "",
+  "conclusions": [],
+  "evidence": [],
+  "open_assertions": [
+   "对话消息在写入上游 Kafka 时使用了固定的 key（如 sessionId 或 conversationId），使得同一场对话的两条消息始终被路由到同一个 partition",
+   "消费端每个 partition 由单个线程/单个消费者实例顺序处理，不存在同一 partition 被并发消费或多线程同时处理同一对话消息的代码路径",
+   "处理过程中没有会打乱消息顺序的并行步骤（如将同一对话的多条消息提交到线程池、CompletableFuture 异步处理或按完成时间聚合）",
+   "写入下游 Kafka 时仍使用与原始消息相同的 key（或显式指定相同的 partition），保证同一场对话的输出消息也落在同一 partition",
+   "代码中没有实现基于序列号/时间戳的排序缓冲区（reordering buffer）来在下游消费或处理阶段恢复顺序，即顺序完全依赖 Kafka partition 的天然有序性",
+   "生产者发送配置中未启用可能引起分区内重排的行为（如 max.in.flight.requests.per.connection > 1 且未开启 enable.idempotence），或启用了幂等生产者以保证分区内顺序"
+  ],
+  "board": {
+   "open": 6
+  },
+  "steps": 8,
+  "llm_calls": 9,
+  "chars": 13235,
+  "stop_reason": "llm_calls",
+  "wall_ms": 70497,
+  "tool_events": [
+   {
+    "tool": "grep_code",
+    "args": "{\"limit\": 50, \"pattern\": \"KafkaProducer\"}",
+    "chars": 69,
+    "rejected": ""
+   },
+   {
+    "tool": "grep_code",
+    "args": "{\"limit\": 50, \"pattern\": \"KafkaConsumer\"}",
+    "chars": 69,
+    "rejected": ""
+   },
+   {
+    "tool": "grep_code",
+    "args": "{\"limit\": 50, \"pattern\": \"partition\"}",
+    "chars": 69,
+    "rejected": ""
+   },
+   {
+    "tool": "search_symbols",
+    "args": "{\"limit\": 20, \"query\": \"Kafka\"}",
+    "chars": 1058,
+    "rejected": ""
+   },
+   {
+    "tool": "search_symbols",
+    "args": "{\"limit\": 20, \"query\": \"Producer\"}",
+    "chars": 271,
+    "rejected": ""
+   },
+   {
+    "tool": "search_symbols",
+    "args": "{\"limit\": 20, \"query\": \"Consumer\"}",
+    "chars": 626,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"service/kafka_service.go :: sendDataToKafka\"}",
+    "chars": 58,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"service/kafka_service.go :: sendGatwayNlpRawMsgNtfToKafka\"}",
+    "chars": 72,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"kafka_client/kafka_producer_client.go :: newKafkaProducerClient\"}",
+    "chars": 78,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"kafka_client/kafka_consumer_client.go :: newKafkaConsumerClient\"}",
+    "chars": 78,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"sendDataToKafka\"}",
+    "chars": 522,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"sendGatwayNlpRawMsgNtfToKafka\"}",
+    "chars": 237,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"newKafkaProducerClient\"}",
+    "chars": 1064,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"newKafkaConsumerClient\"}",
+    "chars": 1037,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"newKafkaConsumerClient\"}",
+    "chars": 1037,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"GetKafkaConsumerClient\"}",
+    "chars": 135,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"AsyncSendMessage\"}",
+    "chars": 541,
+    "rejected": ""
+   },
+   {
+    "tool": "callers",
+    "args": "{\"symbol\": \"sendGatwayNlpRawMsgNtfToKafka\"}",
+    "chars": 192,
+    "rejected": ""
+   },
+   {
+    "tool": "callers",
+    "args": "{\"symbol\": \"sendDataToKafka\"}",
+    "chars": 84,
+    "rejected": ""
+   },
+   {
+    "tool": "search_symbols",
+    "args": "{\"limit\": 30, \"query\": \"Consume\"}",
+    "chars": 812,
+    "rejected": ""
+   },
+   {
+    "tool": "search_symbols",
+    "args": "{\"limit\": 30, \"query\": \"Handler\"}",
+    "chars": 91,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"OnConsumerMessage\"}",
+    "chars": 748,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"ConsumeClaim\"}",
+    "chars": 671,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"ConsumerGroupRun\"}",
+    "chars": 431,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"OnIDealSingleMsgNtf\"}",
+    "chars": 351,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"AsyncIdealSingleMsgProcess\"}",
+    "chars": 2293,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"AsyncSendMessage\"}",
+    "chars": 541,
+    "rejected": ""
+   }
+  ],
+  "fingerprint": null
+ }
+}

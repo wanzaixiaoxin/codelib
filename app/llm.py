@@ -140,3 +140,39 @@ class LLMClient:
         ok = bool(text) and not str(text).startswith("__LLM_ERROR__")
         return {"ok": ok, "type": self.cfg.type, "model": self.cfg.model,
                 "reply": text, "error": self.last_error}
+
+    # ---------------- R2: function calling（仅 openai_compatible） ----------------
+    async def chat_messages(self, messages: List[Dict[str, Any]],
+                            tools: Optional[List[Dict[str, Any]]] = None,
+                            max_tokens: Optional[int] = None) -> Dict[str, Any]:
+        """OpenAI 兼容的多轮 + 工具调用。
+
+        返回 {"content": str, "tool_calls": [{"id","name","arguments"}], "usage"}。
+        其它协议返回 __UNSUPPORTED__ 供调用方降级（本地网关即 openai_compatible）。
+        """
+        c = self.cfg
+        ptype = (c.type or "openai_compatible").lower()
+        if ptype != "openai_compatible":
+            return {"content": "__UNSUPPORTED__", "tool_calls": [], "usage": {}}
+        mt = int(max_tokens or c.max_tokens)
+        url = (c.base_url or "https://api.openai.com/v1").rstrip("/") + "/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        if c.api_key:
+            headers["Authorization"] = f"Bearer {c.api_key}"
+        body: Dict[str, Any] = {"model": c.model, "temperature": c.temperature,
+                                "max_tokens": mt, "messages": messages}
+        if tools:
+            body["tools"] = [{"type": "function", "function": t} for t in tools]
+            body["tool_choice"] = "auto"
+        async with httpx.AsyncClient(timeout=c.timeout) as client:  # type: ignore
+            resp = await client.request("POST", url, headers=headers,
+                                        content=json.dumps(body))
+            resp.raise_for_status()
+            data = resp.json()
+        self.last_raw_usage = data.get("usage") or {}
+        msg = ((data.get("choices") or [{}])[0].get("message") or {})
+        tcs = [{"id": t.get("id", ""), "name": (t.get("function") or {}).get("name", ""),
+                "arguments": (t.get("function") or {}).get("arguments", "{}")}
+               for t in (msg.get("tool_calls") or []) if isinstance(t, dict)]
+        return {"content": (msg.get("content") or "").strip(),
+                "tool_calls": tcs, "usage": self.last_raw_usage}

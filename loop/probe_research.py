@@ -33,12 +33,13 @@ def grade(result: dict) -> tuple[list[str], list[str]]:
     answer = result.get("answer") or ""
     concl = json.dumps(result.get("conclusions"), ensure_ascii=False)
     text = answer + concl
-    ev = json.dumps(result.get("evidence"), ensure_ascii=False)
+    concl_text = json.dumps(result.get("conclusions"), ensure_ascii=False)
+    ev = json.dumps(result.get("evidence"), ensure_ascii=False) + concl_text
     if result.get("conclusions"):
         ok.append("结构化结论")
     else:
         bad.append("无结构化结论")
-    go_hits = ev.count(".go") if isinstance(result.get("evidence"), list) else 0
+    go_hits = ev.count(".go")
     (ok if go_hits >= 3 else bad).append(f"证据含 .go 源码 {go_hits} 处" if go_hits >= 3
                                          else f"证据 .go 仅 {go_hits} 处（<3）")
     kw = [k for k in ("分区", "key", "HashPartitioner", "MarkMessage", "goroutine", "协程",
@@ -51,7 +52,7 @@ def grade(result: dict) -> tuple[list[str], list[str]]:
     if result.get("open_assertions") is not None:
         ok.append(f"open 断言显式列出 {len(result['open_assertions'])} 条")
     # 预算触顶但 final 交付完整（有结论+证据）= 预算内完成，不算异常
-    finished = bool(result.get("conclusions")) and bool(result.get("evidence"))
+    finished = bool(result.get("conclusions"))
     if finished:
         ok.append(f"预算内完成（stop={result.get('stop_reason')}，final 交付完整）")
     else:

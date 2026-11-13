@@ -64,6 +64,7 @@ async def run_research(question: str, llm, tools: ResearchTools,
     lim = {**DEFAULT_LIMITS, **(limits or {})}
     board = tools.board
     t0 = time.time()
+    findings: list = []      # driver 外置保存的工具输出（final 的证据来源）
     stop_reason = "steps_exhausted"
 
     board = await plan(question, llm)
@@ -91,6 +92,7 @@ async def run_research(question: str, llm, tools: ResearchTools,
         llm_calls += 1
         steps += 1
         tcs = resp.get("tool_calls") or []
+        last_assistant_text = resp.get("content") or ""
         if tracer:
             tracer.event("research_step", {"step": steps, "tool_calls": len(tcs),
                                            "chars": chars, "board": board.stats()})
@@ -104,6 +106,7 @@ async def run_research(question: str, llm, tools: ResearchTools,
         for t in tcs:
             out = tools.dispatch(t["name"], t["arguments"])
             chars += len(out)
+            findings.append({"tool": t["name"], "args": str(t["arguments"])[:150], "output": out})
             messages.append({"role": "tool", "tool_call_id": t["id"], "content": out[:6000]})
         if tools.breaker.stop_requested:
             stop_reason = "repeat_breaker"; break
@@ -114,21 +117,53 @@ async def run_research(question: str, llm, tools: ResearchTools,
         if llm_calls >= int(lim["max_llm_calls"]):
             stop_reason = "llm_calls"; break
 
-    # 最终交付：要求 JSON 契约
-    messages.append({"role": "user", "content":
-        "现在基于以上全部工具证据给出最终交付，只输出 JSON：\n"
-        '{"conclusions": ["每条结论一句话，因果必须引用 path :: symbol"],\n'
-        ' "evidence": [{"symbol": "...", "path": "...", "quote": "关键代码行"}],\n'
-        ' "open_assertions": ["本次确实没查到的，逐条列出"],\n'
-        ' "answer": "给用户的完整中文回答"}'})
-    try:
-        resp = await llm.chat_messages(messages)
-        final_text = resp.get("content") or ""
-        llm_calls += 1
-        final_json = extract_json(final_text) or {}
-    except Exception as e:
-        final_json = {"answer": f"最终交付失败 {type(e).__name__}: {e}",
-                      "conclusions": [], "evidence": [], "open_assertions": board.open_assertions()}
+    # 最终交付：全新短上下文（丢工具轨迹——Kimi compaction 语义），防 JSON 被 4096 截断
+    tool_summary = "; ".join(
+        e["tool"] + "(" + str(e["chars"]) + "c)" for e in tools.event_log[-12:])
+    fparts = []
+    for fi, f in enumerate(findings):
+        if f["tool"] in ("read_body", "read_lines", "expand_chain", "grep_code") and f["output"]:
+            fparts.append("[" + str(fi + 1) + "] " + f["tool"] + " " + f["args"][:120] + chr(10) + f["output"][:800])
+    findings_text = (chr(10) * 2).join(fparts[-14:]) if fparts else "（无）"
+    parts = ["用户问题：" + question, "", "断言板：", board.render(), "",
+             "工具返回的代码证据（引用时必须用这里的真实 path :: symbol）：",
+             findings_text, "",
+             "现在给出最终交付，只输出 JSON：",
+             '{"conclusions": ["每条结论一句话，因果必须引用 path :: symbol"],',
+              ' "evidence": [{"symbol": "...", "path": "...", "quote": "关键代码行"}],',
+              ' "open_assertions": ["本次确实没查到的，逐条列出"],',
+              ' "answer": "给用户的完整中文回答"}']
+    final_user = chr(10).join(parts)
+    final_json: dict = {}
+    final_text = ""
+    for attempt in (1, 2):
+        try:
+            resp = await llm.chat_messages(
+                [{"role": "system",
+                  "content": READER_ROLE + chr(10) + "现在是最终交付阶段：不要调用工具，只输出 JSON。"},
+                 {"role": "user", "content": final_user}],
+                max_tokens=8192)
+            llm_calls += 1
+            final_text = resp.get("content") or ""
+            final_json = extract_json(final_text) or {}
+            if final_json.get("answer"):
+                break
+        except Exception as e:
+            final_text = "最终交付失败 " + type(e).__name__ + ": " + str(e)
+    if not final_json:
+        final_json = {"answer": final_text[:2000] or "最终交付为空",
+                      "conclusions": [], "evidence": [],
+                      "open_assertions": board.open_assertions()}
+    # evidence 回填：模型常把 path :: symbol 写进结论而漏填结构化数组——从结论提取
+    if not final_json.get("evidence"):
+        refs, seen = [], set()
+        for c in final_json.get("conclusions", []):
+            for mp, ms in re.findall(r"([\w./\-]+\.\w+)\s*::\s*([\w.]+)", str(c)):
+                key = (mp, ms)
+                if key not in seen:
+                    seen.add(key)
+                    refs.append({"symbol": ms, "path": mp, "quote": ""})
+        final_json["evidence"] = refs
 
     return {
         "question": question, "answer": final_json.get("answer", ""),

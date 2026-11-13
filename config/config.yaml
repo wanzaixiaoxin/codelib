@@ -36,7 +36,7 @@ llm:
   type: openai_compatible         # openai_compatible | azure_openai | anthropic | gemini
   base_url: ${CODELIB_LLM_BASE_URL:-http://127.0.0.1:3425/v1}
   api_key: ${CODELIB_LLM_API_KEY:-}
-  model: ${CODELIB_LLM_MODEL:-workbuddy/glm-5.3}
+  model: ${CODELIB_LLM_MODEL:-workbuddy/glm-5.3-flash}
   temperature: 0.2
   max_tokens: 4096                # 推理型模型建议 ≥2048
   timeout: 90

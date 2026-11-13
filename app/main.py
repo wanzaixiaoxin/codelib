@@ -127,6 +127,16 @@ def _source_labels(citations, limit: int = 5):
         if len(out) >= limit:
             break
     return out
+def _research_labels(evidence, limit: int = 8):
+    """Research 证据 → 与 _source_labels 同构的字符串数组（前端兼容）。"""
+    out = []
+    for e in evidence or []:
+        loc = f"{e.get('path','')} :: {e.get('symbol','')}".strip(" :")
+        if loc and loc not in out:
+            out.append(loc)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _format_answer(ans) -> str:
@@ -752,8 +762,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         finally:
             _tools.close()
         return {"answer": _res.get("answer", ""),
-                "sources": [{"symbol": e.get("symbol", ""), "path": e.get("path", "")}
-                            for e in (_res.get("evidence") or [])],
+                "sources": _research_labels(_res.get("evidence") or []),
                 "trace_id": None,
                 "research": {"steps": _res.get("steps"), "llm_calls": _res.get("llm_calls"),
                              "stop_reason": _res.get("stop_reason"),

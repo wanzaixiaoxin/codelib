@@ -169,7 +169,9 @@ async def run_research(question: str, llm, tools: ResearchTools,
         '{"conclusions": ["每条结论一句话，因果必须引用 path :: symbol"],',
          ' "evidence": [{"symbol": "...", "path": "...", "quote": "关键代码行"}],',
          ' "open_assertions": ["本次确实没查到的，逐条列出"],',
-         ' "answer": "给用户的完整中文回答。' + answer_contract + '}',
+         ' "answer": "给用户的完整中文回答，使用标准 Markdown 排版：开头一句直接给结论；'
+         '用 ## 小节和 - 列表组织要点；每条因果在句尾用（path :: symbol）标注；'
+         '不要堆砌代码行；不要复述研究过程。' + answer_contract + '}',
     ]
     final_user = chr(10).join(parts)
     final_json: dict = {}

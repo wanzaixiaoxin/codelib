@@ -72,6 +72,23 @@ class KnowledgeStore:
             conn.commit()
         finally:
             conn.close()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """迁移 0023：card 表激活（fingerprint / 时间戳 / 索引）。幂等，旧库补列。"""
+        conn = self._connect()
+        try:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(card)")}
+            if not cols:
+                return
+            for col, ddl in (("created_at", "REAL"), ("updated_at", "REAL"),
+                             ("fingerprint", "TEXT")):
+                if col not in cols:
+                    conn.execute(f"ALTER TABLE card ADD COLUMN {col} {ddl}")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_card_ws_type ON card(workspace, type)")
+            conn.commit()
+        finally:
+            conn.close()
 
     # ---------- meta / file hash ----------
     def get_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:

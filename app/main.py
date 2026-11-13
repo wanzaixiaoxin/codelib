@@ -46,6 +46,10 @@ class AskRequest(BaseModel):
     debug: bool = False          # true 时返回 citations/memory/usage 等诊断信息
 
 
+class ResearchAskRequest(BaseModel):
+    question: str
+    workspace: Optional[str] = None
+
 class NewConversationRequest(BaseModel):
     workspace: Optional[str] = None
     title: Optional[str] = None
@@ -653,8 +657,41 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         if req.debug:
             payload["debug"] = ans.to_dict()
         return payload
+    # ---------------- Research Loop（R3 灰度：/api/research/ask，只读研究循环） ----------------
+    @app.post("/api/research/ask")
+    async def research_ask(req: ResearchAskRequest,
+                           user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+        if not (cfg.research or {}).get("enabled", False):
+            raise HTTPException(status_code=404, detail="research 未启用（research.enabled=false）")
+        from .knowledge.build import ws_kb_id
+        from .research.evidence import EvidenceBoard
+        from .research.loop import run_research
+        from .research.tools import ResearchTools
+        ws = user_workspace(user, req.workspace)
+        ws_root = None
+        if ws.path:
+            from pathlib import Path as _P
+            _root = _P(ws.path)
+            ws_root = str(_root) if _root.is_dir() else None
+        board = EvidenceBoard()
+        tools = ResearchTools(cfg.knowledge_db_path, ws_kb_id(ws.id, ws.name), ws_root, board)
+        limits = (cfg.research or {}).get("limits") or {}
+        try:
+            result = await run_research(req.question, bot.llm, tools, limits=limits,
+                                        tracer=None)
+        finally:
+            tools.close()
+        return {"question": req.question, "workspace": ws.id,
+                "answer": result.get("answer", ""),
+                "conclusions": result.get("conclusions", []),
+                "evidence": result.get("evidence", []),
+                "open_assertions": result.get("open_assertions", []),
+                "board": result.get("board", {}),
+                "steps": result.get("steps"), "llm_calls": result.get("llm_calls"),
+                "stop_reason": result.get("stop_reason"),
+                "wall_ms": result.get("wall_ms"),
+                "tool_events": result.get("tool_events", [])}
 
-    # ---------------- 企业微信 ----------------
     @app.get("/channels/wecom/callback")
     async def wecom_verify(request: Request):
         q = dict(request.query_params)

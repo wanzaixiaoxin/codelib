@@ -206,6 +206,7 @@ class AppConfig:
     memory: Dict[str, Any] = field(default_factory=dict)
     knowledge: Dict[str, Any] = field(default_factory=dict)
     auth: Dict[str, Any] = field(default_factory=dict)
+    research: Dict[str, Any] = field(default_factory=dict)
     config_path: str = ""
 
     @property
@@ -294,5 +295,6 @@ class AppConfig:
             memory=data.get("memory") or {},
             knowledge=data.get("knowledge") or {},
             auth=data.get("auth") or {},
+            research=data.get("research") or {},
             config_path=str(cfg_file),
         )

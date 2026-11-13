@@ -179,6 +179,9 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         task = None
         if any(w.index.watch_interval_seconds > 0 for w in cfg.workspaces):
             task = asyncio.create_task(watch_loop(cfg, store))
+        _research_on = bool((cfg.research or {}).get("enabled", False))
+        log.info("Research Loop: %s（/ask 分析类问题自动分流 + /api/research/ask）",
+                 "已启用" if _research_on else "未启用（research.enabled=false）")
         try:
             yield
         finally:
@@ -473,7 +476,8 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     @app.get("/healthz")
     async def healthz() -> Dict[str, Any]:
         return {"ok": True, "llm": cfg.llm.available, "read_only": cfg.read_only,
-                "workspace_count": len(cfg.workspaces)}
+                "workspace_count": len(cfg.workspaces),
+                "research": bool((cfg.research or {}).get("enabled", False))}
 
     # ---------------- 网页对话：会话与历史 ----------------
     @app.get("/api/workspaces")

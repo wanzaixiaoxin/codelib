@@ -49,7 +49,7 @@ def cmd_serve(args) -> int:
     if host in ("0.0.0.0", "::", ""):
         print(f"  内网访问：http://{_lan_ip()}:{port}/")
     print("=" * 62, flush=True)
-    uvicorn.run("app.main:app", host=host, port=port, reload=False)
+    uvicorn.run("app.main:app", host=host, port=port, reload=False, access_log=False)
     return 0
 
 

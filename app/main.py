@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import os
 import re
 import uuid
@@ -36,6 +37,7 @@ from .security import SESSION_COOKIE, SESSION_TTL_SECONDS, issue_session, sessio
 from .watcher import watch_loop
 
 log = logging.getLogger("codelib")
+alog = logging.getLogger("codelib.access")   # 网页/HTTP 访问日志（console + data/logs/access.log）
 
 
 class AskRequest(BaseModel):
@@ -190,9 +192,58 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
     app = FastAPI(title="codelib bot", version="0.3.0", lifespan=lifespan)
     app.state.bot = bot
+
+    # ---------- 网页/HTTP 访问日志（R3.5） ----------
+    def _setup_access_log() -> None:
+        try:
+            from logging.handlers import RotatingFileHandler
+            log_dir = Path(cfg.data_dir) / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            h = RotatingFileHandler(log_dir / "access.log", maxBytes=5 * 1024 * 1024,
+                                    backupCount=3, encoding="utf-8")
+            h.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+            alog.addHandler(h)
+            alog.setLevel(logging.INFO)
+        except Exception as e:
+            log.warning("access.log 初始化失败: %s", e)
+
+    _SKIP_ACCESS = ("/healthz",)
+
+    @app.middleware("http")
+    async def access_log_mw(request: Request, call_next):
+        path = request.url.path
+        if path in _SKIP_ACCESS:
+            return await call_next(request)
+        t0 = time.time()
+        tok = request.cookies.get(SESSION_COOKIE, "")
+        _auth = request.headers.get("authorization", "")
+        if _auth.lower().startswith("bearer "):
+            tok = _auth[8:]
+        who = ("u:" + tok[:8]) if tok else "-"
+        status = 500
+        error = ""
+        try:
+            resp = await call_next(request)
+            status = resp.status_code
+            return resp
+        except HTTPException as e:
+            status = e.status_code
+            raise
+        except Exception as e:
+            error = type(e).__name__ + ": " + str(e)[:120]
+            raise
+        finally:
+            alog.info('%s "%s %s" %d %dms %s%s',
+                      request.client.host if request.client else "-",
+                      request.method, path, status,
+                      int((time.time() - t0) * 1000), who,
+                      (" ERR " + error) if error else "")
+
+    _setup_access_log()
     app.state.store = store
 
     def current_user(request: Request) -> Dict[str, Any]:
+        request.state.user = None
         user = session_user(store, request)
         if not user:
             raise HTTPException(status_code=401, detail="请先登录")
@@ -711,6 +762,11 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             raise HTTPException(status_code=403, detail="普通账号只能进行知识库问答")
         session_id = f"api:{user['id']}:{req.session_id or 'default'}"
         _res = await maybe_run_research(ws, req.question, force=(req.research is True))
+        if _res is not None:
+            _rd = _res.get("research") or {}
+            alog.info('research user=%s steps=%s stop=%s q=%.60s',
+                      (request.state.user if hasattr(request, "state") else "-"),
+                      _rd.get("steps"), _rd.get("stop_reason"), req.question)
         if _res is not None and req.research is not False:
             return {"answer": _res["answer"], "sources": _res["sources"],
                     "research": _res.get("research")}

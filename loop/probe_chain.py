@@ -22,7 +22,7 @@ PATTERNS = {
     "消费端起协程": r"\bgo\s+(async|Async)\w*\s*\(",
     "位点提前提交": r"\.MarkMessage\s*\(",
     "写回成功回调": r"func\s+OnKafkaWriteOK\s*\(",
-    "输出 key 构造": r"nlp_|fmt\.Sprintf\(\s*\"nlp_",
+    "输出 key 构造": r"nlp_%s_%s",
     "hash 分区器": r"NewHashPartitioner",
     "无方向会话键": r"GenBoundKey\s*\(",
     "round 上下文依赖": r"RoundID|ProcessRepoRoundContext|hasSecurityInfo",
@@ -55,8 +55,11 @@ def main():
 
     # 空回调单独判定
     empty_cb = next((n for n in nodes if n.qualname == "OnKafkaWriteOK"), None)
-    cb_empty = bool(empty_cb) and len(
-        empty_cb.body.replace("func OnKafkaWriteOK", "").strip(" {}()\n\t")) < 30
+    if empty_cb:
+        tail = empty_cb.body.split("{", 1)[-1].strip()
+        cb_empty = tail in ("}", "")
+    else:
+        cb_empty = False
     print(f"  [{'HIT ' if cb_empty else 'MISS'}] 回调为空实现     {cb_empty}")
     ok += cb_empty
     total = len(PATTERNS) + 1

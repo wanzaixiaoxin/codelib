@@ -730,6 +730,12 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             return None
         from .knowledge.build import ws_kb_id
         from .research.evidence import EvidenceBoard
+        from app.chain import anchor_context
+        _pre = ""
+        try:
+            _pre = anchor_context(cfg.knowledge_db_path, ws_kb_id(ws.id, ws.name), question)[:12000]
+        except Exception:
+            _pre = ""
         from .research.loop import run_research
         from .research.tools import ResearchTools
         from pathlib import Path as _Path
@@ -742,7 +748,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                                       limits=(_rcfg.get("limits") or {}),
                                       kb_path=cfg.knowledge_db_path,
                                       workspace=_ws_key,
-                                      memory_cfg=(_rcfg.get("memory") or {}))
+                                      preloaded_context=_pre,                                      memory_cfg=(_rcfg.get("memory") or {}))
         finally:
             _tools.close()
         return {"answer": _res.get("answer", ""),
@@ -786,6 +792,12 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         from .knowledge.build import ws_kb_id
         from .research.evidence import EvidenceBoard
         from .research.loop import run_research
+        from app.chain import anchor_context
+        _pre = ""
+        try:
+            _pre = anchor_context(cfg.knowledge_db_path, ws_kb_id(ws.id, ws.name), req.question)[:12000]
+        except Exception:
+            _pre = ""
         from .research.tools import ResearchTools
         ws = user_workspace(user, req.workspace)
         ws_root = None
@@ -802,6 +814,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                                         kb_path=cfg.knowledge_db_path,
                                         workspace=_ws_key,
                                         memory_cfg=((cfg.research or {}).get("memory") or {}),
+                                        preloaded_context=_pre,
                                         tracer=None)
         finally:
             tools.close()

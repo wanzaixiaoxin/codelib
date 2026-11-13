@@ -3,194 +3,105 @@
  "verdict": "PASS",
  "ok": [
   "结构化结论",
-  "证据含 .go 源码 18 处",
-  "关键机制词 ['key', 'MarkMessage', 'goroutine', '幂等', '乱序', '顺序', '提交']",
+  "证据含 .go 源码 19 处",
+  "关键机制词 ['分区', 'key', 'HashPartitioner', 'MarkMessage', '幂等', '乱序', '顺序', '提交']",
   "无「候选未覆盖」免责",
   "open 断言显式列出 5 条",
-  "预算内完成（stop=llm_calls，final 交付完整）"
+  "预算内完成（stop=repeat_breaker，final 交付完整）"
  ],
  "bad": [],
  "result": {
   "question": "分析当两个人的对话数据进入kafka后被我们消费，到最后写入kafka，对话的顺序能保证吗",
-  "answer": "结论：单条方向的消息顺序能保证，但『两个人的一场对话』作为整体，顺序不能完全保证。\n\n能保证的部分（partition 内有序）：\n1. 消费端是严格同步逐条处理的：service/kafka_consumer_service.go :: ConsumeClaim 在一个 for/select 循环里逐条取出消息、同步调用 OnConsumerMessage 处理完、再 MarkMessage 提交 offset。没有任何线程池、异步队列或批量重排。同一个 partition 内，消费顺序 = Kafka 内的存储顺序。\n2. 生产端虽然用异步 producer（kafka_client/kafka_producer_client.go :: AsyncSendMessage 把消息塞进 producer.Input()），但 sarama 的 async producer 按 partition 派发发送，同一个 partition 内的发送顺序与入队顺序一致。\n\n不能保证的部分（对话级全局顺序）：\n1. 最关键的点在 key 的构造：service/kafka_service.go :: sendGatwayNlpRawMsgNtfToKafka 用 \"nlp_%s_%s\"（From_To）作为 key。这个 key 是方向性的——A 发给 B 的消息 key 是 nlp_A_B，B 发给 A 的消息 key 是 nlp_B_A。两个不同的 key 大概率被 hash 到不同的 partition，于是同一对话的两个方向的消息分属不同 partition。\n2. Kafka 本身只保证 partition 内有序、不保证 topic 全局有序；而消费端（kafka_client/kafka_consumer_client.go :: ConsumerGroupRun）是 consumer group 模式，多个 partition 由并行的 ConsumeClaim goroutine 同时消费，跨 partition 的消息到达处理层的先后是随机的。\n3. 整个链路中没有读到任何按序号/时间戳对同一对话做合并重排的逻辑，所以一旦双向消息落在不同 partition，就没有任何环节把它们按原始对话顺序重新排列。\n\n另外一个附加风险（不是乱序而是重复）：消费是『先处理再 MarkMessage』的 at-least-once 语义，producer 侧也未开启幂等（newKafkaProducerClient 只配置了 WaitForLocal），重试或重平衡时同一条消息可能被处理/写入两次，但单 partition 内先后关系仍保持不变。\n\n一句话总结：如果你们的『对话顺序』指同一发送方向（同一 From→To）的消息流，顺序是有保证的；如果指两个人来回交替的完整对话顺序，由于 key 带 From/To 方向导致双向消息可能进不同 partition，且消费端跨 partition 并行、无重排机制，顺序没有保证。若要保证，需要把 key 改成不含方向的会话标识（如排序后的双方 ID 拼接），确保整场对话落到同一 partition。",
+  "answer": "结论分两段说：\n\n【写入端：能保证】生产者统一使用 sarama.NewHashPartitioner（kafka_client/kafka_producer_client.go :: newKafkaProducerClient 和 newKafkaProducerClientWithSASL），发送对话消息时 key 由 bond_chat.GenBoundKey(msg.From, msg.To) 生成（service/nlp_service.go :: asyncQDNlpMsgProcess）。这意味着同一对用户的对话消息会得到相同的 key，被哈希到同一个分区——Kafka 保证单分区内消息有序，所以同两个人的对话消息进入 Kafka 时的相对顺序是有保证的。注意这里 key 是 (From, To) 二元组：A→B 和 B→A 会生成不同 key，可能落到不同分区，两条方向的先后不保证。\n\n【消费到回写端：已确认的部分】位点提交写在 ConsumeClaim 的消费循环里（service/kafka_consumer_service.go :: ConsumeClaim，sess.MarkMessage(message, \"\")），也就是逐条消息标记位点，属于消费框架内的顺序模式。回写 Kafka 走的是异步发送（service/kafka_service.go :: sendDataToKafka → kafka_client/kafka_producer_client.go :: AsyncSendMessage），成功/失败由 OnKafkaWriteOK / OnKafkaWriteFail 两个回调处理——异步通道下如果发生重试且回写生产者未开启幂等（enable.idempotence）或 max.in.flight=1，同分区消息存在乱序风险，这部分配置代码本次没有读到。\n\n【综合判断】同两个人的对话消息在『进入第一个 Kafka』这一段顺序是有保障的；从消费、业务处理到最终回写 Kafka 的完整链路上，端到端顺序还取决于三个环节：ConsumeClaim 内业务处理是否同步串行、MarkMessage 是否在处理成功后才执行、回写生产者的幂等/重试配置——这三处代码本次均未能读到，已逐条列入 open_assertions。",
   "conclusions": [
-   "写入侧以 `nlp_%s_%s`（From_To）作为消息 key：service/kafka_service.go :: sendGatwayNlpRawMsgNtfToKafka，该 key 是方向性的，A→B 与 B→A 的消息 key 不同，会分别被 hash 到（可能）不同的 partition，因此同一两人对话的双向消息没有跨 partition 的全局顺序保证",
-   "生产者是异步 producer，消息带 Key 与 Partition 字段送入 input 通道：kafka_client/kafka_producer_client.go :: AsyncSendMessage，sarama async producer 按 partition 派发，同一 partition 内发送顺序保持；但 config 中未见开启 Idempotence（service/kafka_service.go :: sendGatwayNlpRawMsgNtfToKafka 对应的 newKafkaProducerClient 只设了 WaitForLocal/LZ4 等），重试语义是可能重复而非乱序",
-   "消费端是纯同步逐条处理：service/kafka_consumer_service.go :: ConsumeClaim 在 for/select 循环中同步调用 OnConsumerMessage 后才 MarkMessage，一个 partition 一条 goroutine（sarama ConsumerGroup 语义，kafka_client/kafka_consumer_client.go :: ConsumerGroupRun），partition 内消费顺序严格保持",
-   "消费失败语义为 at-least-once：service/kafka_consumer_service.go :: ConsumeClaim 先处理再 MarkMessage，异常/重平衡会从上次提交 offset 重放，产生重复但不会打乱单 partition 内顺序",
-   "消费侧跨 partition 是并发的：kafka_client/kafka_consumer_client.go :: ConsumerGroupRun 启动 consumer group，多个 partition 的 ConsumeClaim 并行执行，因此落在不同 partition 的同一对话消息在消费端也不保证先后",
-   "消息分发是单入口同步 switch：service/nlp_service.go :: OnConsumerMessage 按 topic 同步分发到 OnQDRawNlpMsgNtf / OnIDealSingleMsgNtf 等处理函数，分发层本身不重排"
+   "写入侧顺序有保证：生产者使用 sarama.NewHashPartitioner（kafka_client/kafka_producer_client.go :: newKafkaProducerClient / newKafkaProducerClientWithSASL），且消息 key 由 bond_chat.GenBoundKey(msg.From, msg.To) 生成（service/nlp_service.go :: asyncQDNlpMsgProcess），同一对用户的对话消息哈希到同一 key，会被路由到同一分区，Kafka 单分区内天然保序",
+   "回写 Kafka 走异步通道：service/kafka_service.go :: sendDataToKafka 调用 kafka_client/kafka_producer_client.go :: AsyncSendMessage 异步发送，发送结果通过 kafka_client/kafka_producer_client.go :: OnKafkaWriteOK / OnKafkaWriteFail 回调处理",
+   "消费侧位点提交位于 ConsumeClaim 循环内（service/kafka_consumer_service.go :: ConsumeClaim，sess.MarkMessage(message, \"\")），即位点是在消费 claim 过程中逐条标记，而不是消费前的批量自动提交"
   ],
   "evidence": [
    {
-    "symbol": "sendGatwayNlpRawMsgNtfToKafka",
+    "symbol": "newKafkaProducerClient",
+    "path": "kafka_client/kafka_producer_client.go",
+    "quote": "config.Producer.Partitioner = sarama.NewHashPartitioner"
+   },
+   {
+    "symbol": "newKafkaProducerClientWithSASL",
+    "path": "kafka_client/kafka_producer_client.go",
+    "quote": "config.Producer.Partitioner = sarama.NewHashPartitioner"
+   },
+   {
+    "symbol": "asyncQDNlpMsgProcess",
+    "path": "service/nlp_service.go",
+    "quote": "key = bond_chat.GenBoundKey(msg.From, msg.To)"
+   },
+   {
+    "symbol": "sendDataToKafka",
     "path": "service/kafka_service.go",
-    "quote": "key := fmt.Sprintf(\"nlp_%s_%s\", msg.From, msg.To); sendDataToKafka(def.NLP_RAW_MSG_NTF, key, msg)"
+    "quote": "client.AsyncSendMessage(&msg, &meta)"
    },
    {
     "symbol": "AsyncSendMessage",
     "path": "kafka_client/kafka_producer_client.go",
-    "quote": "message := &sarama.ProducerMessage{Topic: topic, Partition: msg.Partition, Value: sarama.StringEncoder(msg.Data), Key: sarama.StringEncoder(msg.Key)}; s.producer.Input() <- message"
+    "quote": "func (s *KafkaProducerClient) AsyncSendMessage(msg *Message, meta_data *KafkaMetaData) {"
    },
    {
-    "symbol": "newKafkaProducerClient",
+    "symbol": "OnKafkaWriteOK",
     "path": "kafka_client/kafka_producer_client.go",
-    "quote": "config.Producer.RequiredAcks = sarama.RequiredAcks(sarama.WaitForLocal); config.Producer.Compression = sarama.CompressionLZ4"
+    "quote": "func OnKafkaWriteOK(client *KafkaProducerClient, meta *KafkaMetaData, msg *sarama.ProducerMessage) {"
+   },
+   {
+    "symbol": "OnKafkaWriteFail",
+    "path": "kafka_client/kafka_producer_client.go",
+    "quote": "func OnKafkaWriteFail(client *KafkaProducerClient, meta *KafkaMetaData, msg *sarama.ProducerMessage)"
    },
    {
     "symbol": "ConsumeClaim",
     "path": "service/kafka_consumer_service.go",
-    "quote": "case message, ok := <-claim.Messages(): ... OnConsumerMessage(message); sess.MarkMessage(message"
-   },
-   {
-    "symbol": "ConsumerGroupRun",
-    "path": "kafka_client/kafka_consumer_client.go",
-    "quote": "err := s.consumerGroup.Consume(context.Background(), topics, s.consumerGroupHandler)"
-   },
-   {
-    "symbol": "OnConsumerMessage",
-    "path": "service/nlp_service.go",
-    "quote": "switch config.GetKafkaConfig().ResolveOriginTopic(message.Topic) { case def.QD_NLP_RAW_MSG_NTF: OnQDRawNlpMsgNtf(message.Value) ... case def.IDEAL_SINGLE_MSG_NTF: OnIDealSingleMsgNtf(message.Value)"
+    "quote": "sess.MarkMessage(message, \"\")"
    }
   ],
   "open_assertions": [
-   "本次未读到 sendDataToKafka 的实现，无法确认下游发送时 msg.Partition 的具体取值（是否为 -1 走默认 key-hash 分区，还是显式指定分区）",
-   "本次未读到 OnQDRawNlpMsgNtf / OnIDealSingleMsgNtf 等 handler 的函数体，无法确认其内部是否有异步、线程池或批量窗口处理",
-   "本次未读到对话数据最上游（进入 def.NLP_RAW_MSG_NTF / QD_NLP_RAW_MSG_NTF / IDEAL_SINGLE_MSG_NTF 之前）的生产方代码，只能从本服务可见的 key 构造推断其分区方式",
-   "本次未读到 sarama ConsumerGroup 的 GroupID 与 Rebalance 策略配置（kafka_consumer_client.go 仅读到 RegisterConsumerHandle / GetKafkaConsumerClient），无法确认重平衡的具体行为配置",
-   "本次未读到任何按序号/时间戳重排的合并逻辑（整个链路中未见相关符号），确认链路中没有此类重排机制，但这属于『不存在』的确认而非读到实现"
+   "service/kafka_consumer_service.go :: ConsumeClaim 的完整函数体本次未读到，无法确认 MarkMessage 是否严格发生在业务处理成功之后、以及 claim 循环内对同一分区消息是否为同步串行处理（未读到处理逻辑中是否存在 go 语句或异步派发）",
+   "OnConsumerMessage 的函数体本次未读到（该符号的读取调用被强制终止），无法确认消费消息后的业务处理是否同步执行、是否对同一会话加锁或分组串行",
+   "Kafka 生产者的 Idempotent / RequiredAcks / MaxInFlightRequestsPerConnection 等配置本次未读到（newKafkaProducerClient 函数体仅确认了 Partitioner 一行），无法确认回写是否启用幂等或 in-flight=1，异步重试场景下可能出现同分区消息乱序",
+   "消费者组的 Consumer.Offsets.AutoCommit / 手动提交模式配置、以及 ChannelBufferSize / NumConsumers 等并发配置本次未读到",
+   "消费者 rebalance 相关处理（ConsumerGroupHandler 的 Cleanup/Setup、分区再均衡回调）本次未读到"
   ],
   "board": {
    "open": 6
   },
-  "steps": 8,
-  "llm_calls": 10,
-  "chars": 9084,
-  "stop_reason": "llm_calls",
-  "wall_ms": 159583,
+  "steps": 14,
+  "llm_calls": 15,
+  "chars": 2025,
+  "stop_reason": "repeat_breaker",
+  "wall_ms": 113904,
   "tool_events": [
    {
     "tool": "search_symbols",
-    "args": "{\"limit\": 20, \"query\": \"kafka\"}",
-    "chars": 1058,
+    "args": "{\"query\": \"OnConsumerMessage\"}",
+    "chars": 53,
+    "rejected": ""
+   },
+   {
+    "tool": "search_symbols",
+    "args": "{\"query\": \"KafkaConsumerGroupHandler\"}",
+    "chars": 36,
+    "rejected": ""
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"service.OnConsumerMessage\"}",
+    "chars": 40,
     "rejected": ""
    },
    {
     "tool": "grep_code",
-    "args": "{\"limit\": 30, \"pattern\": \"Kafka\"}",
+    "args": "{\"limit\": 30, \"pattern\": \"Consumer.Offsets.Initial\"}",
     "chars": 69,
     "rejected": ""
    },
    {
     "tool": "read_body",
-    "args": "{\"symbol\": \"service/kafka_service.go::sendDataToKafka\"}",
-    "chars": 56,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
-    "args": "{\"symbol\": \"kafka_client/kafka_consumer_client.go::newKafkaConsumerClient\"}",
-    "chars": 76,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
-    "args": "{\"symbol\": \"kafka_client/kafka_producer_client.go::newKafkaProducerClient\"}",
-    "chars": 76,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
-    "args": "{\"symbol\": \"service/kafka_service.go::sendGatwayNlpRawMsgNtfToKafka\"}",
-    "chars": 70,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
-    "args": "{\"symbol\": \"sendDataToKafka\"}",
-    "chars": 522,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
-    "args": "{\"symbol\": \"newKafkaConsumerClient\"}",
-    "chars": 1037,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
-    "args": "{\"symbol\": \"newKafkaProducerClient\"}",
-    "chars": 1064,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
-    "args": "{\"symbol\": \"sendGatwayNlpRawMsgNtfToKafka\"}",
-    "chars": 237,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
-    "args": "{\"symbol\": \"AsyncSendMessage\"}",
-    "chars": 541,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
-    "args": "{\"symbol\": \"GetKafkaConsumerClient\"}",
-    "chars": 135,
-    "rejected": ""
-   },
-   {
-    "tool": "callers",
-    "args": "{\"symbol\": \"sendDataToKafka\"}",
-    "chars": 84,
-    "rejected": ""
-   },
-   {
-    "tool": "callers",
-    "args": "{\"symbol\": \"GetKafkaConsumerClient\"}",
-    "chars": 64,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
-    "args": "{\"symbol\": \"sendGatwayNlpRawMsgNtfToKafka\"}",
-    "chars": 237,
-    "rejected": ""
-   },
-   {
-    "tool": "callers",
-    "args": "{\"symbol\": \"GetKafkaConsumerClient\"}",
-    "chars": 64,
-    "rejected": ""
-   },
-   {
-    "tool": "search_symbols",
-    "args": "{\"limit\": 20, \"query\": \"Consume\"}",
-    "chars": 812,
-    "rejected": ""
-   },
-   {
-    "tool": "search_symbols",
-    "args": "{\"limit\": 20, \"query\": \"Handler\"}",
-    "chars": 91,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
-    "args": "{\"symbol\": \"ConsumerGroupRun\"}",
-    "chars": 431,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
-    "args": "{\"symbol\": \"ConsumeClaim\"}",
-    "chars": 671,
-    "rejected": ""
-   },
-   {
-    "tool": "read_body",
     "args": "{\"symbol\": \"OnConsumerMessage\"}",
     "chars": 748,
     "rejected": ""
@@ -203,9 +114,63 @@
    },
    {
     "tool": "read_body",
-    "args": "{\"symbol\": \"RegisterConsumerHandle\"}",
-    "chars": 193,
-    "rejected": ""
+    "args": "{\"symbol\": \"OnConsumerMessage\"}",
+    "chars": 0,
+    "rejected": "提示：该调用已重复 3 次，重复结果不会带来新信息。"
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"OnConsumerMessage\"}",
+    "chars": 0,
+    "rejected": "提示：该调用已重复 4 次，重复结果不会带来新信息。"
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"OnConsumerMessage\"}",
+    "chars": 0,
+    "rejected": "警告（中）：同一调用已重复 5 次。考虑换关键词/换工具。"
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"OnConsumerMessage\"}",
+    "chars": 0,
+    "rejected": "警告（中）：同一调用已重复 6 次。考虑换关键词/换工具。"
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"OnConsumerMessage\"}",
+    "chars": 0,
+    "rejected": "警告（中）：同一调用已重复 7 次。考虑换关键词/换工具。"
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"OnConsumerMessage\"}",
+    "chars": 0,
+    "rejected": "警告（强）：同一调用已重复 8 次。必须立即换检索方式，否则本轮将被强制停止。"
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"OnConsumerMessage\"}",
+    "chars": 0,
+    "rejected": "警告（强）：同一调用已重复 9 次。必须立即换检索方式，否则本轮将被强制停止。"
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"OnConsumerMessage\"}",
+    "chars": 0,
+    "rejected": "警告（强）：同一调用已重复 10 次。必须立即换检索方式，否则本轮将被强制停止。"
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"OnConsumerMessage\"}",
+    "chars": 0,
+    "rejected": "警告（强）：同一调用已重复 11 次。必须立即换检索方式，否则本轮将被强制停止。"
+   },
+   {
+    "tool": "read_body",
+    "args": "{\"symbol\": \"OnConsumerMessage\"}",
+    "chars": 0,
+    "rejected": "同一调用已重复 12 次，强制停止本轮。请基于已收集的证据直接作答。"
    }
   ],
   "fingerprint": null,

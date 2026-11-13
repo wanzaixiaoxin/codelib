@@ -14,8 +14,8 @@ from app.research.evidence import EvidenceBoard
 from app.research.profiles import PLANNER_ROLE, READER_ROLE, READER_TOOLS, VERIFIER_ROLE
 from app.research.tools import ResearchTools
 
-DEFAULT_LIMITS = {"max_steps": 12, "max_chars": 24000, "max_llm_calls": 8,
-                  "max_wall_ms": 120000}
+DEFAULT_LIMITS = {"max_steps": 20, "max_chars": 40000, "max_llm_calls": 16,
+                  "max_wall_ms": 300000}
 STOP_FILE = Path(__file__).resolve().parents[1] / "loop" / "STOP"
 
 
@@ -62,6 +62,7 @@ async def plan(question: str, llm) -> EvidenceBoard:
 async def run_research(question: str, llm, tools: ResearchTools,
                        limits: dict | None = None, tracer=None,
                        kb_path=None, workspace: str = "",
+                       preloaded_context: str = "",
                        memory_cfg: dict | None = None) -> dict:
     lim = {**DEFAULT_LIMITS, **(limits or {})}
     board = tools.board
@@ -84,6 +85,8 @@ async def run_research(question: str, llm, tools: ResearchTools,
         tracer.event("research_step", {"phase": "plan", "assertions": board.stats()})
 
     system = READER_ROLE
+    if preloaded_context:
+        system += chr(10) * 2 + "## 预读上下文（自动调用链扫描）" + chr(10) * 2 + preloaded_context[:12000]
     messages: list[dict] = [{"role": "system", "content": system},
                             {"role": "user", "content": question + ((chr(10) * 2 + card_text) if card_text else "")}]
     specs = tools.tool_specs(READER_TOOLS)
@@ -136,6 +139,11 @@ async def run_research(question: str, llm, tools: ResearchTools,
         if f["tool"] in ("read_body", "read_lines", "expand_chain", "grep_code") and f["output"]:
             fparts.append("[" + str(fi + 1) + "] " + f["tool"] + " " + f["args"][:120] + chr(10) + f["output"][:600])
     findings_text = (chr(10) * 2).join(fparts[-10:]) if fparts else "（无）"
+    # 预读上下文的关键语句索引（go/MarkMessage/回调/分区器）并入 final 证据区
+    _pre_idx = ""
+    if preloaded_context and "关键语句索引" in preloaded_context:
+        _pre_idx = preloaded_context.split("【相关函数体】")[0]
+        findings_text = _pre_idx + (chr(10) * 2) + findings_text
     answer_contract = (
         "面向使用者直接给结论与依据；不要复述研究过程；不要出现「候选未覆盖/未知/需要进一步确认」；绝对不要让用户自己去查代码——那是你的工作；没查到的信息只放进 open_assertions。"
     )

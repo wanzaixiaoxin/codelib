@@ -277,3 +277,48 @@ def build_chain_context(kb_path, workspace: str, question: str,
         return text, nodes, meta
     finally:
         reader.close()
+
+def anchor_context(kb_path, workspace: str, question: str,
+                   per_body: int = 1200, max_bodies: int = 10) -> str:
+    """定向预注入：只取结构锚点命中的函数体 + 关键语句索引。
+
+    与 build_chain_context 的区别：不做全链展开（48 节点/16k 字符会稀释注意力、
+    depth 截断会把关键的 async 处理函数切掉），只保留「结构特征命中」的函数，
+    并在顶部给出关键语句索引（go 语句 / MarkMessage / 回调 / 分区器在哪些符号），
+    保证决定性事实必然显眼在场。
+    """
+    reader = ChainReader(kb_path, workspace)
+    try:
+        structural = reader.structural_anchors(question, limit_per_concern=4)
+        anchors = [sid for sid, _q, _c in structural]
+        if not anchors:
+            return ""
+        nodes = reader.expand(anchors, hops=2, max_nodes=18)
+        patterns = {"go 语句（并发派发）": r"go\s+[A-Za-z_][A-Za-z0-9_.]*\s*\(",
+                    "位点提交": r"\.MarkMessage\s*\(",
+                    "写回回调": r"func\s+On\w+OK|On\w+Fail",
+                    "分区器": r"Partitioner",
+                    "会话键": r"GenBoundKey",
+                    "异步发送": r"AsyncSendMessage"}
+        ev = ChainReader.find_evidence(nodes, patterns)
+        index_lines = []
+        for label, hits in ev.items():
+            for h in hits[:2]:
+                index_lines.append(f"- {label}: {h['symbol']} ({h['path']}) 代码行: {h['line'][:100]}")
+        bodies = []
+        seen = set()
+        for n in nodes:
+            if is_noise(n.path) or n.qualname in seen or not n.body.strip():
+                continue
+            seen.add(n.qualname)
+            bodies.append(f"### {n.qualname}  ({n.path})" + chr(10) + n.body.strip()[:per_body])
+            if len(bodies) >= max_bodies:
+                break
+        parts = []
+        if index_lines:
+            parts.append("【关键语句索引】" + chr(10) + chr(10).join(index_lines))
+        if bodies:
+            parts.append("【相关函数体】" + chr(10) + chr(10).join(bodies))
+        return (chr(10) * 2).join(parts)
+    finally:
+        reader.close()

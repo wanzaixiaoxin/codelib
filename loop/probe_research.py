@@ -41,6 +41,11 @@ def main() -> int:
         print("LLM 不可用")
         return 1
     runs = int(sys.argv[sys.argv.index("--runs") + 1]) if "--runs" in sys.argv else 2
+    from app.chain import anchor_context
+    try:
+        _pre = anchor_context(ROOT / "data" / "knowledge.db", WS, QUESTION)[:12000]
+    except Exception:
+        _pre = ""
     results = []
     for run_no in range(1, runs + 1):
         board = EvidenceBoard()
@@ -49,6 +54,7 @@ def main() -> int:
         try:
             result = asyncio.run(run_research(QUESTION, llm, tools,
                                               kb_path=KB, workspace=WS,
+                                              preloaded_context=_pre,
                                               memory_cfg={"max_cards_per_run": 3,
                                                           "disable_write": False}))
             result["run_no"] = run_no

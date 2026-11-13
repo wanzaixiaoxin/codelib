@@ -44,6 +44,7 @@ class AskRequest(BaseModel):
     session_id: Optional[str] = "api"
     deep: bool = False
     debug: bool = False          # true 时返回 citations/memory/usage 等诊断信息
+    research: Optional[bool] = None  # None=自动（enabled 且分析类问题走 Research Loop）
 
 
 class ResearchAskRequest(BaseModel):
@@ -128,6 +129,15 @@ def _source_labels(citations, limit: int = 5):
 
 def _format_answer(ans) -> str:
     return ans.text
+
+
+_ANALYSIS_HINTS = ("分析", "为什么", "能否", "能不能", "顺序", "架构", "对比", "设计",
+                   "实现", "机制", "流程", "怎么", "如何", "保证", "评估", "风险")
+
+
+def _is_analysis_question(q: str) -> bool:
+    """分析类问题走 Research Loop；简单查询仍走旧 FTS 快通道。"""
+    return len(q or "") >= 20 or any(h in (q or "") for h in _ANALYSIS_HINTS)
 
 
 def create_app(config_path: Optional[str] = None) -> FastAPI:
@@ -648,6 +658,35 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         if user["role"] != "admin" and (req.question or "").lstrip().startswith("/"):
             raise HTTPException(status_code=403, detail="普通账号只能进行知识库问答")
         session_id = f"api:{user['id']}:{req.session_id or 'default'}"
+        _rcfg = cfg.research or {}
+        _want = req.research if req.research is not None else (
+            _rcfg.get("enabled", False) and _is_analysis_question(req.question))
+        if _want:
+            from .knowledge.build import ws_kb_id
+            from .research.evidence import EvidenceBoard
+            from .research.loop import run_research
+            from .research.tools import ResearchTools
+            from pathlib import Path as _Path
+            _ws_root = str(_Path(ws.path)) if ws.path and _Path(ws.path).is_dir() else None
+            _board = EvidenceBoard()
+            _tools = ResearchTools(cfg.knowledge_db_path, ws_kb_id(ws.id, ws.name),
+                                   _ws_root, _board)
+            try:
+                _res = await run_research(req.question, bot.llm, _tools,
+                                          limits=(_rcfg.get("limits") or {}),
+                                          kb_path=cfg.knowledge_db_path,
+                                          workspace=ws_kb_id(ws.id, ws.name),
+                                          memory_cfg=(_rcfg.get("memory") or {}))
+            finally:
+                _tools.close()
+            return {"answer": _res.get("answer", ""),
+                    "sources": [{"symbol": e.get("symbol", ""), "path": e.get("path", "")}
+                                for e in (_res.get("evidence") or [])],
+                    "research": {"steps": _res.get("steps"), "llm_calls": _res.get("llm_calls"),
+                                 "stop_reason": _res.get("stop_reason"),
+                                 "board": _res.get("board", {}),
+                                 "open_assertions": _res.get("open_assertions", []),
+                                 "tool_events": _res.get("tool_events", [])}}
         ans = await bot.handle(ws.id, req.question, session_id, req.deep)
         # 默认只返回干净结果：答案 + 精简来源
         payload: Dict[str, Any] = {

@@ -77,6 +77,6 @@ channels:
 
 # Research Loop（R3 灰度）：/api/research/ask 端点开关；关闭时该端点返回 404
 research:
-  enabled: false
+  enabled: true
   limits: {max_steps: 12, max_chars: 24000, max_llm_calls: 8, max_wall_ms: 120000}
   memory: {disable_write: false, floor_ratio: 0.15, max_cards_per_run: 6}

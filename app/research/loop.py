@@ -136,14 +136,24 @@ async def run_research(question: str, llm, tools: ResearchTools,
         if f["tool"] in ("read_body", "read_lines", "expand_chain", "grep_code") and f["output"]:
             fparts.append("[" + str(fi + 1) + "] " + f["tool"] + " " + f["args"][:120] + chr(10) + f["output"][:600])
     findings_text = (chr(10) * 2).join(fparts[-10:]) if fparts else "（无）"
-    parts = ["用户问题：" + question, "", "断言板：", board.render(), "",
-             "工具返回的代码证据（引用时必须用这里的真实 path :: symbol）：",
-             findings_text, "",
-             "现在给出最终交付，只输出 JSON：",
-             '{"conclusions": ["每条结论一句话，因果必须引用 path :: symbol"],',
-              ' "evidence": [{"symbol": "...", "path": "...", "quote": "关键代码行"}],',
-              ' "open_assertions": ["本次确实没查到的，逐条列出"],',
-              ' "answer": "给用户的完整中文回答"}']
+    answer_contract = (
+        "面向使用者直接给结论与依据；不要复述研究过程；不要出现「候选未覆盖/未知/需要进一步确认」；绝对不要让用户自己去查代码——那是你的工作；没查到的信息只放进 open_assertions。"
+    )
+    parts = [
+        "用户问题：" + question,
+        "",
+        "断言板：",
+        board.render(),
+        "",
+        "工具返回的代码证据（引用时必须用这里的真实 path :: symbol）：",
+        findings_text,
+        "",
+        "现在给出最终交付，只输出 JSON：",
+        '{"conclusions": ["每条结论一句话，因果必须引用 path :: symbol"],',
+         ' "evidence": [{"symbol": "...", "path": "...", "quote": "关键代码行"}],',
+         ' "open_assertions": ["本次确实没查到的，逐条列出"],',
+         ' "answer": "给用户的完整中文回答。' + answer_contract + '}',
+    ]
     final_user = chr(10).join(parts)
     final_json: dict = {}
     final_text = ""

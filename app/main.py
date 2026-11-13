@@ -628,11 +628,24 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             raise HTTPException(status_code=403, detail="普通账号只能进行知识库问答")
         ws = cfg.workspace(sess["workspace_id"])
         history = store.get_all_messages(sid)[-8:]          # 先取历史（不含本次）
-        ans = await bot.handle(ws.id, req.content, sid, req.deep, history)
+        _res = await maybe_run_research(ws, req.content)
+        if _res is not None:
+            store.append_message(sid, ws.id, "user", req.content)
+            store.append_message(sid, ws.id, "assistant", _res["answer"])
+            new_title = None
+            if (sess.get("title") or "新对话") in ("新对话", ""):
+                new_title = (req.content or "").strip().replace(chr(10), " ")[:30] or "新对话"
+            store.touch_session(sid, new_title)
+            return {"answer": _res["answer"], "sources": _res["sources"],
+                    "trace_id": _res.get("trace_id"),
+                    "conversation": store.get_session(sid),
+                    "messages": store.get_all_messages(sid),
+                    "research": _res.get("research")}
         new_title = None
         if (sess.get("title") or "新对话") in ("新对话", ""):
             new_title = (req.content or "").strip().replace("\n", " ")[:30] or "新对话"
         store.touch_session(sid, new_title)
+        ans = await bot.handle(ws.id, req.content, sid, req.deep, history)
         return {"answer": ans.text, "sources": _source_labels(ans.citations),
                 "trace_id": ans.trace_id,
                 "conversation": store.get_session(sid),
@@ -656,50 +669,58 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         store.cleanup_empty_sessions(owner_user_id=user["id"])
         return {"ok": True}
 
+    async def maybe_run_research(ws, question: str, force: bool = False) -> Optional[dict]:
+        """研究循环统一入口：enabled + 分析类判定（force 可绕过判定）。
+        返回统一 dict（answer/sources/trace_id/research），None = 走旧快通道。"""
+        _rcfg = cfg.research or {}
+        if not _rcfg.get("enabled", False):
+            return None
+        if not force and not _is_analysis_question(question):
+            return None
+        from .knowledge.build import ws_kb_id
+        from .research.evidence import EvidenceBoard
+        from .research.loop import run_research
+        from .research.tools import ResearchTools
+        from pathlib import Path as _Path
+        _ws_root = str(_Path(ws.path)) if ws.path and _Path(ws.path).is_dir() else None
+        _ws_key = ws_kb_id(ws.id, ws.name)
+        _board = EvidenceBoard()
+        _tools = ResearchTools(cfg.knowledge_db_path, _ws_key, _ws_root, _board)
+        try:
+            _res = await run_research(question, bot.llm, _tools,
+                                      limits=(_rcfg.get("limits") or {}),
+                                      kb_path=cfg.knowledge_db_path,
+                                      workspace=_ws_key,
+                                      memory_cfg=(_rcfg.get("memory") or {}))
+        finally:
+            _tools.close()
+        return {"answer": _res.get("answer", ""),
+                "sources": [{"symbol": e.get("symbol", ""), "path": e.get("path", "")}
+                            for e in (_res.get("evidence") or [])],
+                "trace_id": None,
+                "research": {"steps": _res.get("steps"), "llm_calls": _res.get("llm_calls"),
+                             "stop_reason": _res.get("stop_reason"),
+                             "board": _res.get("board", {}),
+                             "open_assertions": _res.get("open_assertions", []),
+                             "tool_events": _res.get("tool_events", [])}}
+
     @app.post("/ask")
     async def ask(req: AskRequest, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
         ws = user_workspace(user, req.workspace)
         if user["role"] != "admin" and (req.question or "").lstrip().startswith("/"):
             raise HTTPException(status_code=403, detail="普通账号只能进行知识库问答")
         session_id = f"api:{user['id']}:{req.session_id or 'default'}"
-        _rcfg = cfg.research or {}
-        _want = req.research if req.research is not None else (
-            _rcfg.get("enabled", False) and _is_analysis_question(req.question))
-        if _want:
-            from .knowledge.build import ws_kb_id
-            from .research.evidence import EvidenceBoard
-            from .research.loop import run_research
-            from .research.tools import ResearchTools
-            from pathlib import Path as _Path
-            _ws_root = str(_Path(ws.path)) if ws.path and _Path(ws.path).is_dir() else None
-            _board = EvidenceBoard()
-            _tools = ResearchTools(cfg.knowledge_db_path, ws_kb_id(ws.id, ws.name),
-                                   _ws_root, _board)
-            try:
-                _res = await run_research(req.question, bot.llm, _tools,
-                                          limits=(_rcfg.get("limits") or {}),
-                                          kb_path=cfg.knowledge_db_path,
-                                          workspace=ws_kb_id(ws.id, ws.name),
-                                          memory_cfg=(_rcfg.get("memory") or {}))
-            finally:
-                _tools.close()
-            return {"answer": _res.get("answer", ""),
-                    "sources": [{"symbol": e.get("symbol", ""), "path": e.get("path", "")}
-                                for e in (_res.get("evidence") or [])],
-                    "research": {"steps": _res.get("steps"), "llm_calls": _res.get("llm_calls"),
-                                 "stop_reason": _res.get("stop_reason"),
-                                 "board": _res.get("board", {}),
-                                 "open_assertions": _res.get("open_assertions", []),
-                                 "tool_events": _res.get("tool_events", [])}}
+        _res = await maybe_run_research(ws, req.question, force=(req.research is True))
+        if _res is not None and req.research is not False:
+            return {"answer": _res["answer"], "sources": _res["sources"],
+                    "research": _res.get("research")}
         ans = await bot.handle(ws.id, req.question, session_id, req.deep)
-        # 默认只返回干净结果：答案 + 精简来源
-        payload: Dict[str, Any] = {
-            "answer": ans.text,
-            "sources": _source_labels(ans.citations),
-        }
+        payload: Dict[str, Any] = {"answer": ans.text,
+                                   "sources": _source_labels(ans.citations)}
         if req.debug:
             payload["debug"] = ans.to_dict()
         return payload
+
     # ---------------- Research Loop（R3 灰度：/api/research/ask，只读研究循环） ----------------
     @app.post("/api/research/ask")
     async def research_ask(req: ResearchAskRequest,
@@ -716,11 +737,15 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             from pathlib import Path as _P
             _root = _P(ws.path)
             ws_root = str(_root) if _root.is_dir() else None
+        _ws_key = ws_kb_id(ws.id, ws.name)
         board = EvidenceBoard()
-        tools = ResearchTools(cfg.knowledge_db_path, ws_kb_id(ws.id, ws.name), ws_root, board)
+        tools = ResearchTools(cfg.knowledge_db_path, _ws_key, ws_root, board)
         limits = (cfg.research or {}).get("limits") or {}
         try:
             result = await run_research(req.question, bot.llm, tools, limits=limits,
+                                        kb_path=cfg.knowledge_db_path,
+                                        workspace=_ws_key,
+                                        memory_cfg=((cfg.research or {}).get("memory") or {}),
                                         tracer=None)
         finally:
             tools.close()

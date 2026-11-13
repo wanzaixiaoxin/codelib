@@ -29,35 +29,9 @@ WS_ROOT = ROOT.parent / "code" / "pri_nlp_worker_svr"
 
 
 def grade(result: dict) -> tuple[list[str], list[str]]:
-    ok, bad = [], []
-    answer = result.get("answer") or ""
-    concl = json.dumps(result.get("conclusions"), ensure_ascii=False)
-    text = answer + concl
-    concl_text = json.dumps(result.get("conclusions"), ensure_ascii=False)
-    ev = json.dumps(result.get("evidence"), ensure_ascii=False) + concl_text
-    if result.get("conclusions"):
-        ok.append("结构化结论")
-    else:
-        bad.append("无结构化结论")
-    go_hits = ev.count(".go")
-    (ok if go_hits >= 3 else bad).append(f"证据含 .go 源码 {go_hits} 处" if go_hits >= 3
-                                         else f"证据 .go 仅 {go_hits} 处（<3）")
-    kw = [k for k in ("分区", "key", "HashPartitioner", "MarkMessage", "goroutine", "协程",
-                      "幂等", "乱序", "顺序", "提交") if k in text]
-    (ok if len(kw) >= 3 else bad).append(f"关键机制词 {kw}" if len(kw) >= 3
-                                         else f"关键机制词过少 {kw}")
-    (ok if "候选未覆盖" not in text else bad).append("无「候选未覆盖」免责"
-                                                    if "候选未覆盖" not in text
-                                                    else "出现「候选未覆盖」免责")
-    if result.get("open_assertions") is not None:
-        ok.append(f"open 断言显式列出 {len(result['open_assertions'])} 条")
-    # 预算触顶但 final 交付完整（有结论+证据）= 预算内完成，不算异常
-    finished = bool(result.get("conclusions"))
-    if finished:
-        ok.append(f"预算内完成（stop={result.get('stop_reason')}，final 交付完整）")
-    else:
-        bad.append(f"异常终止 {result.get('stop_reason')}（无完整交付）")
-    return ok, bad
+    """R5：评分逻辑独立到 loop/scorer.py（外部脚本判定，不采信模型自述）。"""
+    from loop.scorer import grade_research
+    return grade_research(result)
 
 
 def main() -> int:
@@ -111,7 +85,8 @@ def main() -> int:
         print("  [PASS]", x)
     for x in bad:
         print("  [FAIL]", x)
-    verdict = "PASS" if not bad else "FAIL"
+    from loop.scorer import verdict as _verdict
+    verdict = _verdict(ok, bad)
     print(f"\nR2 验收: {verdict}（耗时 {time.time()-t0:.0f}s）")
     (ROOT / "loop" / "reports" / "research_probe.json").write_text(
         json.dumps({"question": QUESTION, "verdict": verdict, "ok": ok, "bad": bad,
